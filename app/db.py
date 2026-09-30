@@ -70,3 +70,40 @@ def next_numero(prefijo: str, tabla: str, conn: sqlite3.Connection) -> str:
     )
     n = cur.fetchone()["n"] + 1
     return f"{prefijo}-{anio}-{n:04d}"
+
+
+ITBMS_RATE = 0.07  # ITBMS Panamá 7%
+
+
+def calcular_totales(items) -> tuple[float, float, float]:
+    """Devuelve (subtotal, itbms, total) para una lista de (descripcion, cantidad, precio)."""
+    subtotal = round(sum(cant * precio for _desc, cant, precio in items), 2)
+    itbms = round(subtotal * ITBMS_RATE, 2)
+    return subtotal, itbms, round(subtotal + itbms, 2)
+
+
+def obtener_items(cotizacion_id: int, conn: sqlite3.Connection) -> list[tuple[str, float, float]]:
+    filas = conn.execute(
+        "SELECT descripcion, cantidad, precio_unitario FROM cotizacion_items "
+        "WHERE cotizacion_id = ? ORDER BY id",
+        (cotizacion_id,),
+    ).fetchall()
+    return [(f["descripcion"], f["cantidad"], f["precio_unitario"]) for f in filas]
+
+
+def guardar_items(cotizacion_id: int, items, conn: sqlite3.Connection) -> tuple[float, float, float]:
+    """Reemplaza las líneas de la cotización y actualiza subtotal/ITBMS/total."""
+    items = list(items)
+    conn.execute("DELETE FROM cotizacion_items WHERE cotizacion_id = ?", (cotizacion_id,))
+    conn.executemany(
+        "INSERT INTO cotizacion_items (cotizacion_id, descripcion, cantidad, precio_unitario) "
+        "VALUES (?, ?, ?, ?)",
+        [(cotizacion_id, d, c, p) for d, c, p in items],
+    )
+    subtotal, itbms, total = calcular_totales(items)
+    conn.execute(
+        "UPDATE cotizaciones SET subtotal = ?, itbms = ?, total = ? WHERE id = ?",
+        (subtotal, itbms, total, cotizacion_id),
+    )
+    conn.commit()
+    return subtotal, itbms, total

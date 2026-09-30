@@ -9,8 +9,9 @@ from datetime import date
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QLineEdit, QLabel, QFormLayout,
-    QComboBox, QMessageBox
+    QComboBox, QMessageBox, QDialog, QDialogButtonBox, QHeaderView
 )
+from PySide6.QtCore import Qt
 
 from app import db
 
@@ -67,6 +68,144 @@ class ClientesTab(QWidget):
             self.tabla.setItem(i, 2, QTableWidgetItem(fila["identificacion"] or ""))
 
 
+class ItemsDialog(QDialog):
+    """Editor de líneas de una cotización: tabla editable con totales automáticos."""
+    COLS = ["Descripción", "Cantidad", "Precio unitario", "Importe"]
+
+    def __init__(self, cotizacion_id, numero, editable, parent=None):
+        super().__init__(parent)
+        self.cotizacion_id = cotizacion_id
+        self.editable = editable
+        self._cargando = False
+        self.setWindowTitle(f"Items de {numero}")
+        self.resize(700, 450)
+        layout = QVBoxLayout(self)
+
+        self.tabla = QTableWidget(0, 4)
+        self.tabla.setHorizontalHeaderLabels(self.COLS)
+        self.tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tabla.itemChanged.connect(self._al_editar)
+        layout.addWidget(self.tabla)
+
+        botones = QHBoxLayout()
+        self.btn_agregar = QPushButton("Agregar línea")
+        self.btn_quitar = QPushButton("Quitar línea")
+        self.btn_agregar.clicked.connect(lambda: self.agregar_fila())
+        self.btn_quitar.clicked.connect(self.quitar_fila)
+        botones.addWidget(self.btn_agregar)
+        botones.addWidget(self.btn_quitar)
+        botones.addStretch()
+        layout.addLayout(botones)
+
+        self.lbl_totales = QLabel()
+        self.lbl_totales.setAlignment(Qt.AlignRight)
+        layout.addWidget(self.lbl_totales)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Save).setText("Guardar")
+        bb.button(QDialogButtonBox.Cancel).setText("Cancelar")
+        bb.accepted.connect(self.guardar)
+        bb.rejected.connect(self.reject)
+        layout.addWidget(bb)
+
+        if not editable:
+            self.btn_agregar.setEnabled(False)
+            self.btn_quitar.setEnabled(False)
+            self.tabla.setEditTriggers(QTableWidget.NoEditTriggers)
+            bb.button(QDialogButtonBox.Save).setEnabled(False)
+            self.setWindowTitle(f"Items de {numero} (solo lectura)")
+
+        conn = db.get_connection()
+        items = db.obtener_items(cotizacion_id, conn)
+        conn.close()
+        for desc, cant, precio in items:
+            self.agregar_fila(desc, cant, precio)
+        if editable and not items:
+            self.agregar_fila()
+        self._actualizar_totales()
+
+    def agregar_fila(self, desc="", cant=1.0, precio=0.0):
+        self._cargando = True
+        r = self.tabla.rowCount()
+        self.tabla.insertRow(r)
+        self.tabla.setItem(r, 0, QTableWidgetItem(desc))
+        self.tabla.setItem(r, 1, QTableWidgetItem(f"{cant:g}"))
+        self.tabla.setItem(r, 2, QTableWidgetItem(f"{precio:.2f}"))
+        importe = QTableWidgetItem(f"{cant * precio:.2f}")
+        importe.setFlags(importe.flags() & ~Qt.ItemIsEditable)
+        self.tabla.setItem(r, 3, importe)
+        self._cargando = False
+        self._actualizar_totales()
+
+    def quitar_fila(self):
+        filas = sorted({i.row() for i in self.tabla.selectedIndexes()}, reverse=True)
+        if not filas and self.tabla.rowCount():
+            filas = [self.tabla.rowCount() - 1]
+        for r in filas:
+            self.tabla.removeRow(r)
+        self._actualizar_totales()
+
+    @staticmethod
+    def _numero(item, defecto=0.0):
+        try:
+            return float(item.text().replace(",", ".")) if item else defecto
+        except ValueError:
+            return None
+
+    def _al_editar(self, item):
+        if self._cargando or item.column() == 3:
+            return
+        self._actualizar_totales()
+
+    def _leer_items(self):
+        """Devuelve (items, error). Ignora filas totalmente vacías."""
+        items = []
+        for r in range(self.tabla.rowCount()):
+            desc_it = self.tabla.item(r, 0)
+            desc = desc_it.text().strip() if desc_it else ""
+            cant = self._numero(self.tabla.item(r, 1))
+            precio = self._numero(self.tabla.item(r, 2))
+            if cant is None or precio is None:
+                return None, f"Fila {r + 1}: cantidad o precio no es un número válido."
+            if not desc and cant == 0 and precio == 0:
+                continue
+            if not desc:
+                return None, f"Fila {r + 1}: falta la descripción."
+            items.append((desc, cant, precio))
+        return items, None
+
+    def _actualizar_totales(self):
+        self._cargando = True
+        validos = []
+        for r in range(self.tabla.rowCount()):
+            cant = self._numero(self.tabla.item(r, 1))
+            precio = self._numero(self.tabla.item(r, 2))
+            importe = self.tabla.item(r, 3)
+            if cant is None or precio is None:
+                if importe:
+                    importe.setText("—")
+                continue
+            if importe:
+                importe.setText(f"{cant * precio:.2f}")
+            validos.append(("", cant, precio))
+        self._cargando = False
+        sub, itbms, total = db.calcular_totales(validos)
+        self.lbl_totales.setText(
+            f"Subtotal: {sub:,.2f}    ITBMS ({db.ITBMS_RATE:.0%}): {itbms:,.2f}    "
+            f"<b>Total: {total:,.2f}</b>"
+        )
+
+    def guardar(self):
+        items, error = self._leer_items()
+        if error:
+            QMessageBox.warning(self, "Datos inválidos", error)
+            return
+        conn = db.get_connection()
+        db.guardar_items(self.cotizacion_id, items, conn)
+        conn.close()
+        self.accept()
+
+
 class CotizacionesTab(QWidget):
     def __init__(self):
         super().__init__()
@@ -79,11 +218,23 @@ class CotizacionesTab(QWidget):
         top.addWidget(QLabel("Cliente:"))
         top.addWidget(self.cliente_combo)
         top.addWidget(btn_nueva)
+        top.addStretch()
         layout.addLayout(top)
 
         self.tabla = QTableWidget(0, 5)
         self.tabla.setHorizontalHeaderLabels(["Número", "Cliente", "Fecha", "Estado", "Total"])
+        self.tabla.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tabla.setSelectionMode(QTableWidget.SingleSelection)
+        self.tabla.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabla.cellDoubleClicked.connect(lambda *_: self.editar_items())
         layout.addWidget(self.tabla)
+
+        acciones = QHBoxLayout()
+        btn_items = QPushButton("Editar items")
+        btn_items.clicked.connect(self.editar_items)
+        acciones.addWidget(btn_items)
+        acciones.addStretch()
+        layout.addLayout(acciones)
 
         self.refrescar()
 
@@ -95,18 +246,37 @@ class CotizacionesTab(QWidget):
             self.cliente_combo.addItem(c["nombre"], c["id"])
 
         filas = conn.execute("""
-            SELECT c.numero, cl.nombre AS cliente, c.fecha, c.estado, c.total
+            SELECT c.id, c.numero, cl.nombre AS cliente, c.fecha, c.estado, c.total
             FROM cotizaciones c JOIN clientes cl ON cl.id = c.cliente_id
             ORDER BY c.id DESC
         """).fetchall()
         conn.close()
         self.tabla.setRowCount(len(filas))
         for i, fila in enumerate(filas):
-            self.tabla.setItem(i, 0, QTableWidgetItem(fila["numero"]))
+            num = QTableWidgetItem(fila["numero"])
+            num.setData(Qt.UserRole, fila["id"])
+            self.tabla.setItem(i, 0, num)
             self.tabla.setItem(i, 1, QTableWidgetItem(fila["cliente"]))
             self.tabla.setItem(i, 2, QTableWidgetItem(fila["fecha"]))
             self.tabla.setItem(i, 3, QTableWidgetItem(fila["estado"]))
             self.tabla.setItem(i, 4, QTableWidgetItem(f"{fila['total']:.2f}"))
+
+    def _seleccionada(self):
+        fila = self.tabla.currentRow()
+        if fila < 0:
+            QMessageBox.information(self, "Selecciona una cotización", "Selecciona una cotización de la tabla.")
+            return None
+        item = self.tabla.item(fila, 0)
+        return item.data(Qt.UserRole), item.text(), self.tabla.item(fila, 3).text()
+
+    def editar_items(self):
+        sel = self._seleccionada()
+        if not sel:
+            return
+        cot_id, numero, estado = sel
+        dlg = ItemsDialog(cot_id, numero, editable=(estado == "borrador"), parent=self)
+        if dlg.exec():
+            self.refrescar()
 
     def nueva_cotizacion(self):
         cliente_id = self.cliente_combo.currentData()
