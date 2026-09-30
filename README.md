@@ -17,7 +17,7 @@ Proyecto en fase inicial (scaffold). Pensado para desarrollarse con Claude Code.
 
 - [ ] **Cotizaciones**: crear, editar, listar, cambiar estado (borrador / enviada / aprobada / rechazada), buscar por cliente.
   - [x] Items de cotización: tabla editable (descripción, cantidad, precio), subtotal, ITBMS 7% y total automáticos. Solo se editan cotizaciones en `borrador`.
-  - [ ] Cambio de estado
+  - [x] Cambio de estado: borrador → enviada → aprobada / rechazada (para enviar se requiere al menos una línea)
   - [ ] Búsqueda y filtros
 - [ ] **Facturas**: generar factura a partir de una cotización aprobada, numeración consecutiva, listado y seguimiento de pago (pendiente / pagada / vencida).
 - [x] **Clientes**: catálogo básico de clientes (nombre, RUC/cédula, contacto).

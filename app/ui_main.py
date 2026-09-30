@@ -227,6 +227,7 @@ class CotizacionesTab(QWidget):
         self.tabla.setSelectionMode(QTableWidget.SingleSelection)
         self.tabla.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabla.cellDoubleClicked.connect(lambda *_: self.editar_items())
+        self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
         layout.addWidget(self.tabla)
 
         acciones = QHBoxLayout()
@@ -234,6 +235,12 @@ class CotizacionesTab(QWidget):
         btn_items.clicked.connect(self.editar_items)
         acciones.addWidget(btn_items)
         acciones.addStretch()
+        acciones.addWidget(QLabel("Cambiar estado a:"))
+        self.estado_combo = QComboBox()
+        acciones.addWidget(self.estado_combo)
+        self.btn_estado = QPushButton("Aplicar")
+        self.btn_estado.clicked.connect(self.cambiar_estado)
+        acciones.addWidget(self.btn_estado)
         layout.addLayout(acciones)
 
         self.refrescar()
@@ -251,6 +258,7 @@ class CotizacionesTab(QWidget):
             ORDER BY c.id DESC
         """).fetchall()
         conn.close()
+        sel_id = self._id_seleccionado()
         self.tabla.setRowCount(len(filas))
         for i, fila in enumerate(filas):
             num = QTableWidgetItem(fila["numero"])
@@ -260,6 +268,36 @@ class CotizacionesTab(QWidget):
             self.tabla.setItem(i, 2, QTableWidgetItem(fila["fecha"]))
             self.tabla.setItem(i, 3, QTableWidgetItem(fila["estado"]))
             self.tabla.setItem(i, 4, QTableWidgetItem(f"{fila['total']:.2f}"))
+            if fila["id"] == sel_id:
+                self.tabla.setCurrentCell(i, 0)
+        self._actualizar_acciones()
+
+    def _id_seleccionado(self):
+        fila = self.tabla.currentRow()
+        item = self.tabla.item(fila, 0) if fila >= 0 else None
+        return item.data(Qt.UserRole) if item else None
+
+    def _actualizar_acciones(self):
+        """Llena el combo con los estados a los que se puede pasar desde el actual."""
+        self.estado_combo.clear()
+        fila = self.tabla.currentRow()
+        if fila >= 0:
+            self.estado_combo.addItems(db.TRANSICIONES_COTIZACION.get(self.tabla.item(fila, 3).text(), []))
+        self.btn_estado.setEnabled(self.estado_combo.count() > 0)
+
+    def cambiar_estado(self):
+        sel = self._seleccionada()
+        if not sel or not self.estado_combo.currentText():
+            return
+        conn = db.get_connection()
+        try:
+            db.cambiar_estado_cotizacion(sel[0], self.estado_combo.currentText(), conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Cambio de estado", str(e))
+            return
+        finally:
+            conn.close()
+        self.refrescar()
 
     def _seleccionada(self):
         fila = self.tabla.currentRow()

@@ -107,3 +107,28 @@ def guardar_items(cotizacion_id: int, items, conn: sqlite3.Connection) -> tuple[
     )
     conn.commit()
     return subtotal, itbms, total
+
+
+TRANSICIONES_COTIZACION = {
+    "borrador": ["enviada"],
+    "enviada": ["aprobada", "rechazada"],
+    "aprobada": [],
+    "rechazada": [],
+}
+
+
+def cambiar_estado_cotizacion(cotizacion_id: int, nuevo: str, conn: sqlite3.Connection) -> None:
+    """Valida la transición de estado y la aplica. Lanza ValueError si no es válida."""
+    fila = conn.execute(
+        "SELECT estado, (SELECT COUNT(*) FROM cotizacion_items WHERE cotizacion_id = ?) AS n_items "
+        "FROM cotizaciones WHERE id = ?",
+        (cotizacion_id, cotizacion_id),
+    ).fetchone()
+    if fila is None:
+        raise ValueError("La cotización no existe.")
+    if nuevo not in TRANSICIONES_COTIZACION.get(fila["estado"], []):
+        raise ValueError(f"No se puede pasar de '{fila['estado']}' a '{nuevo}'.")
+    if nuevo == "enviada" and fila["n_items"] == 0:
+        raise ValueError("Agrega al menos una línea antes de enviar la cotización.")
+    conn.execute("UPDATE cotizaciones SET estado = ? WHERE id = ?", (nuevo, cotizacion_id))
+    conn.commit()
