@@ -4,7 +4,7 @@ App de escritorio para creación, gestión y seguimiento de **cotizaciones** y g
 
 ## Estado
 
-Proyecto en fase inicial (scaffold). Pensado para desarrollarse con Claude Code.
+Funcionalidad principal implementada (ver lista abajo). El formato visual de los PDF es básico y se afinará después.
 
 ## Stack
 
@@ -13,13 +13,13 @@ Proyecto en fase inicial (scaffold). Pensado para desarrollarse con Claude Code.
 - SQLite (almacenamiento local, archivo `quotetrack.db`)
 - PyInstaller (para compilar a `.exe` más adelante, igual que PlacaBasePro)
 
-## Funcionalidad prevista
+## Funcionalidad
 
-- [ ] **Cotizaciones**: crear, editar, listar, cambiar estado (borrador / enviada / aprobada / rechazada), buscar por cliente.
+- [x] **Cotizaciones**: crear, editar, listar, cambiar estado (borrador / enviada / aprobada / rechazada), buscar por cliente.
   - [x] Items de cotización: tabla editable (descripción, cantidad, precio), subtotal, ITBMS 7% y total automáticos. Solo se editan cotizaciones en `borrador`.
   - [x] Cambio de estado: borrador → enviada → aprobada / rechazada (para enviar se requiere al menos una línea)
-  - [ ] Búsqueda y filtros
-- [ ] **Facturas**: generar factura a partir de una cotización aprobada, numeración consecutiva, listado y seguimiento de pago (pendiente / pagada / vencida).
+  - [x] Búsqueda y filtros: por cliente o número y por estado, en Cotizaciones y Facturas
+- [x] **Facturas**: generar factura a partir de una cotización aprobada, numeración consecutiva, listado y seguimiento de pago (pendiente / pagada / vencida).
   - [x] Generar factura desde cotización aprobada (`FAC-AAAA-NNNN`, estado `pendiente`, una sola factura por cotización)
   - [x] Seguimiento de pago: marcar como pagada (con fecha de pago) o vencida; filas vencidas en rojo y pagadas en verde
 - [x] **Clientes**: catálogo básico de clientes (nombre, RUC/cédula, contacto).

@@ -31,6 +31,37 @@ def exportar_pdf(parent, funcion, registro_id, numero):
     QMessageBox.information(parent, "Exportar PDF", f"PDF guardado en:\n{ruta}")
 
 
+class FiltroBar(QHBoxLayout):
+    """Barra de búsqueda (cliente o número) + filtro por estado; llama a `al_cambiar` al modificarse."""
+
+    def __init__(self, estados, al_cambiar):
+        super().__init__()
+        self.busqueda = QLineEdit()
+        self.busqueda.setPlaceholderText("Buscar por cliente o número…")
+        self.busqueda.setClearButtonEnabled(True)
+        self.estado = QComboBox()
+        self.estado.addItem("Todos los estados", None)
+        for e in estados:
+            self.estado.addItem(e, e)
+        self.addWidget(self.busqueda, 1)
+        self.addWidget(QLabel("Estado:"))
+        self.addWidget(self.estado)
+        self.busqueda.textChanged.connect(lambda *_: al_cambiar())
+        self.estado.currentIndexChanged.connect(lambda *_: al_cambiar())
+
+    def clausula(self, alias, columna_estado):
+        """Devuelve (SQL 'WHERE ...', parámetros); `alias` es el de la tabla principal."""
+        condiciones, params = [], []
+        texto = self.busqueda.text().strip()
+        if texto:
+            condiciones.append(f"(cl.nombre LIKE ? OR {alias}.numero LIKE ?)")
+            params += [f"%{texto}%"] * 2
+        if self.estado.currentData():
+            condiciones.append(f"{alias}.{columna_estado} = ?")
+            params.append(self.estado.currentData())
+        return ("WHERE " + " AND ".join(condiciones) if condiciones else ""), params
+
+
 class ClientesTab(QWidget):
     def __init__(self):
         super().__init__()
@@ -237,6 +268,9 @@ class CotizacionesTab(QWidget):
         top.addStretch()
         layout.addLayout(top)
 
+        self.filtro = FiltroBar(list(db.TRANSICIONES_COTIZACION), lambda: self.refrescar())
+        layout.addLayout(self.filtro)
+
         self.tabla = QTableWidget(0, 5)
         self.tabla.setHorizontalHeaderLabels(["Número", "Cliente", "Fecha", "Estado", "Total"])
         self.tabla.setSelectionBehavior(QTableWidget.SelectRows)
@@ -270,15 +304,21 @@ class CotizacionesTab(QWidget):
     def refrescar(self):
         conn = db.get_connection()
         clientes = conn.execute("SELECT id, nombre FROM clientes ORDER BY nombre").fetchall()
+        cliente_actual = self.cliente_combo.currentData()
         self.cliente_combo.clear()
         for c in clientes:
             self.cliente_combo.addItem(c["nombre"], c["id"])
+        idx = self.cliente_combo.findData(cliente_actual)
+        if idx >= 0:
+            self.cliente_combo.setCurrentIndex(idx)
 
-        filas = conn.execute("""
+        where, params = self.filtro.clausula("c", "estado")
+        filas = conn.execute(f"""
             SELECT c.id, c.numero, cl.nombre AS cliente, c.fecha, c.estado, c.total
             FROM cotizaciones c JOIN clientes cl ON cl.id = c.cliente_id
+            {where}
             ORDER BY c.id DESC
-        """).fetchall()
+        """, params).fetchall()
         conn.close()
         sel_id = self._id_seleccionado()
         self.tabla.setRowCount(len(filas))
@@ -383,6 +423,8 @@ class FacturasTab(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
+        self.filtro = FiltroBar(["pendiente", "pagada", "vencida"], lambda: self.refrescar())
+        layout.addLayout(self.filtro)
         self.tabla = QTableWidget(0, 6)
         self.tabla.setHorizontalHeaderLabels(
             ["Número", "Cliente", "Fecha", "Estado de pago", "Fecha de pago", "Total"])
@@ -419,11 +461,13 @@ class FacturasTab(QWidget):
 
     def refrescar(self):
         conn = db.get_connection()
-        filas = conn.execute("""
+        where, params = self.filtro.clausula("f", "estado_pago")
+        filas = conn.execute(f"""
             SELECT f.id, f.numero, cl.nombre AS cliente, f.fecha, f.estado_pago, f.fecha_pago, f.total
             FROM facturas f JOIN clientes cl ON cl.id = f.cliente_id
+            {where}
             ORDER BY f.id DESC
-        """).fetchall()
+        """, params).fetchall()
         conn.close()
         sel_id = self._id_seleccionado()
         self.tabla.setRowCount(len(filas))
