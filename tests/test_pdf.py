@@ -57,15 +57,22 @@ def test_borrador_oculto_por_defecto(conn, tmp_path, pdf_sin_comprimir):
 
 def test_borrador_visible_con_opcion(conn, tmp_path, pdf_sin_comprimir):
     ruta = tmp_path / "c.pdf"
-    pdf.exportar_cotizacion(1, str(ruta), mostrar_borrador=True)
+    pdf.exportar_cotizacion(1, str(ruta), mostrar_estado=True)
     assert "borrador" in contenido(ruta)
 
 
-def test_otros_estados_se_siguen_imprimiendo(conn, tmp_path, pdf_sin_comprimir):
+def test_ningun_estado_se_imprime_por_defecto(conn, tmp_path, pdf_sin_comprimir):
     db.cambiar_estado_cotizacion(1, "enviada", conn)
     ruta = tmp_path / "c.pdf"
     pdf.exportar_cotizacion(1, str(ruta))
-    assert "enviada" in contenido(ruta)
+    assert "Estado" not in contenido(ruta) and "enviada" not in contenido(ruta)
+
+
+def test_opcion_de_configuracion_muestra_estado(conn, tmp_path, pdf_sin_comprimir):
+    db.guardar_config("mostrar_estado_pdf", "1", conn)
+    ruta = tmp_path / "c.pdf"
+    pdf.exportar_cotizacion(1, str(ruta))
+    assert "Estado" in contenido(ruta) and "borrador" in contenido(ruta)
 
 
 def test_factura_imprime_notas_copiadas(conn, tmp_path, pdf_sin_comprimir):
@@ -84,3 +91,38 @@ def test_encabezado_sin_solapamiento():
     est = pdf._estilos()
     for nombre in ("Title", "Normal", "Heading3", "Notas"):
         assert est[nombre].leading >= est[nombre].fontSize * 1.2, nombre
+
+
+def test_encabezado_empresa_con_nombres_largos(conn, tmp_path):
+    db.guardar_config("empresa_nombre", "INTEGRO " + "SOCIEDAD ANONIMA " * 4, conn)
+    db.guardar_config("empresa_correo", "correo.muy.largo.sin.espacios." * 4 + "@ejemplo.com", conn)
+    lineas = pdf._bloque_empresa(pdf._estilos(), conn)
+    for p in lineas[:-1]:
+        w, h = p.wrap(pdf.ANCHO_EMPRESA, 1000)
+        assert w <= pdf.ANCHO_EMPRESA + 1
+        assert h >= p.style.leading  # cada línea ocupa su propio interlineado: sin solapes
+    pdf.exportar_cotizacion(1, str(tmp_path / "c.pdf"))
+
+
+def test_itbms_exento_en_pdf(conn, tmp_path, pdf_sin_comprimir):
+    db.guardar_config("itbms_tasa", "0", conn)
+    db.guardar_items(1, [("x", 1, 100.0)], conn)
+    ruta = tmp_path / "c.pdf"
+    pdf.exportar_cotizacion(1, str(ruta))
+    assert "ITBMS \\(exento\\)" in contenido(ruta)  # los paréntesis se escapan en el PDF
+
+
+def test_descripcion_multilinea_y_viñetas(conn, tmp_path, pdf_sin_comprimir):
+    db.guardar_items(1, [("Linea uno\nLinea dos " + "palabra " * 80, 1, 23551.60)], conn)
+    db.guardar_notas(1, "• Primera viñeta\n- Segunda viñeta", conn)
+    ruta = tmp_path / "c.pdf"
+    pdf.exportar_cotizacion(1, str(ruta))
+    txt = contenido(ruta)
+    assert "B/. 23,551.60" in txt and "Linea uno" in txt and "Segunda vi" in txt
+
+
+def test_encabezado_de_seccion_no_queda_solo_al_pie():
+    from reportlab.platypus import Paragraph
+    elementos = pdf._bloque_notas(pdf._estilos(), "ALCANCE\n• uno\n\nEXCLUSIONES\n• dos")
+    secciones = [e for e in elementos if isinstance(e, Paragraph) and e.style.name == "NotasSeccion"]
+    assert len(secciones) == 2 and all(e.style.keepWithNext for e in secciones)

@@ -74,6 +74,8 @@ def init_db() -> None:
     if "notas" not in columnas:
         conn.execute("ALTER TABLE facturas ADD COLUMN notas TEXT NOT NULL DEFAULT ''")
     conn.execute("UPDATE cotizaciones SET notas = '' WHERE notas IS NULL")
+    if "proyecto" not in [c["name"] for c in conn.execute("PRAGMA table_info(cotizaciones)")]:
+        conn.execute("ALTER TABLE cotizaciones ADD COLUMN proyecto TEXT NOT NULL DEFAULT ''")
     conn.commit()
     conn.close()
 
@@ -91,10 +93,10 @@ def next_numero(prefijo: str, tabla: str, conn: sqlite3.Connection) -> str:
 ITBMS_RATE = 0.07  # ITBMS Panamá 7%
 
 
-def calcular_totales(items) -> tuple[float, float, float]:
+def calcular_totales(items, tasa: float = ITBMS_RATE) -> tuple[float, float, float]:
     """Devuelve (subtotal, itbms, total) para una lista de (descripcion, cantidad, precio)."""
     subtotal = round(sum(cant * precio for _desc, cant, precio in items), 2)
-    itbms = round(subtotal * ITBMS_RATE, 2)
+    itbms = round(subtotal * tasa, 2)
     return subtotal, itbms, round(subtotal + itbms, 2)
 
 
@@ -116,7 +118,7 @@ def guardar_items(cotizacion_id: int, items, conn: sqlite3.Connection) -> tuple[
         "VALUES (?, ?, ?, ?)",
         [(cotizacion_id, d, c, p) for d, c, p in items],
     )
-    subtotal, itbms, total = calcular_totales(items)
+    subtotal, itbms, total = calcular_totales(items, obtener_tasa_itbms(conn))
     conn.execute(
         "UPDATE cotizaciones SET subtotal = ?, itbms = ?, total = ? WHERE id = ?",
         (subtotal, itbms, total, cotizacion_id),
@@ -197,16 +199,39 @@ def marcar_factura_vencida(factura_id: int, conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-PLANTILLA_NOTAS_INICIAL = (
-    "ALCANCE\n"
-    "- Descripción de los trabajos o productos incluidos en esta cotización.\n\n"
-    "EXCLUSIONES\n"
-    "- Todo lo que no esté detallado en las líneas de esta cotización.\n\n"
-    "CONDICIONES\n"
-    "- Validez de la oferta: 15 días.\n"
-    "- Forma de pago: 50% al aprobar, 50% al entregar.\n"
-    "- Los precios no incluyen ITBMS salvo que se indique lo contrario."
-)
+PLANTILLA_NOTAS_INICIAL = """ALCANCE
+• Diseño estructural integral: modelo y análisis, memoria de cálculo y planos estructurales, conforme al REP-2021 y ACI 318-19.
+• El precio corresponde a las áreas de construcción indicadas en el alcance.
+
+EXCLUSIONES
+• Estudio geotécnico y recomendaciones de cimentación.
+• Cimentación profunda (pilotes), que se cotiza por separado si aplica.
+• Planos de taller.
+• Inspección en obra y supervisión.
+• Diseño de instalaciones (eléctrico, mecánico, sanitario) y fachadas especiales.
+
+REVISIONES
+• Se incluye un máximo de dos (2) rondas de revisión por entregable. Las revisiones adicionales o cambios de alcance se cobran por hora o mediante adenda.
+
+FORMA DE PAGO
+• 30% al inicio del proyecto.
+• 40% a la entrega de planos.
+• 30% a la aprobación final.
+
+VALIDEZ DE LA OFERTA
+• Esta cotización tiene una validez de 30 días calendario a partir de la fecha de emisión.
+
+OBSERVACIONES
+• Si la estructura o cimentación de alguna torre difiere de la torre tipo, el precio de esa torre se reajustará."""
+
+# Valores por defecto de la configuración (clave -> valor)
+CONFIG_DEFECTOS = {
+    "mostrar_estado_pdf": "0",
+    "itbms_tasa": "7",
+    "empresa_nombre": "INTEGRO SA",
+    "empresa_subtitulo": "INGENIERIA ESTRUCTURAL",
+    "empresa_correo": "",
+}
 
 
 def obtener_config(clave: str, conn: sqlite3.Connection, defecto: str = "") -> str:
@@ -238,4 +263,46 @@ def obtener_notas(cotizacion_id: int, conn: sqlite3.Connection) -> str:
 
 def guardar_notas(cotizacion_id: int, notas: str, conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE cotizaciones SET notas = ? WHERE id = ?", (notas, cotizacion_id))
+    conn.commit()
+
+
+def restaurar_plantilla_notas(conn: sqlite3.Connection) -> str:
+    conn.execute("DELETE FROM configuracion WHERE clave = 'plantilla_notas'")
+    conn.commit()
+    return PLANTILLA_NOTAS_INICIAL
+
+
+def obtener_opcion(clave: str, conn: sqlite3.Connection) -> str:
+    return obtener_config(clave, conn, CONFIG_DEFECTOS[clave])
+
+
+def mostrar_estado_pdf(conn: sqlite3.Connection) -> bool:
+    return obtener_opcion("mostrar_estado_pdf", conn) == "1"
+
+
+def obtener_tasa_itbms(conn: sqlite3.Connection) -> float:
+    """Tasa de ITBMS como fracción (0.07). 0 = exento."""
+    try:
+        return max(0.0, float(obtener_opcion("itbms_tasa", conn).replace(",", "."))) / 100
+    except ValueError:
+        return ITBMS_RATE
+
+
+def obtener_proyecto(cotizacion_id: int, conn: sqlite3.Connection) -> str:
+    fila = conn.execute("SELECT proyecto FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()
+    return (fila["proyecto"] or "") if fila else ""
+
+
+def guardar_proyecto(cotizacion_id: int, proyecto: str, conn: sqlite3.Connection) -> None:
+    conn.execute("UPDATE cotizaciones SET proyecto = ? WHERE id = ?", (proyecto, cotizacion_id))
+    conn.commit()
+
+
+def obtener_notas_factura(factura_id: int, conn: sqlite3.Connection) -> str:
+    fila = conn.execute("SELECT notas FROM facturas WHERE id = ?", (factura_id,)).fetchone()
+    return (fila["notas"] or "") if fila else ""
+
+
+def guardar_notas_factura(factura_id: int, notas: str, conn: sqlite3.Connection) -> None:
+    conn.execute("UPDATE facturas SET notas = ? WHERE id = ?", (notas, factura_id))
     conn.commit()
