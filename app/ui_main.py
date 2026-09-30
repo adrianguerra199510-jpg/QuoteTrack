@@ -9,9 +9,11 @@ from datetime import date
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QLineEdit, QLabel, QFormLayout,
-    QComboBox, QMessageBox, QDialog, QDialogButtonBox, QHeaderView
+    QComboBox, QMessageBox, QDialog, QDialogButtonBox, QHeaderView,
+    QDateEdit
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QDate
+from PySide6.QtGui import QColor
 
 from app import db
 
@@ -354,28 +356,101 @@ class CotizacionesTab(QWidget):
 
 
 class FacturasTab(QWidget):
+    COLOR_VENCIDA = QColor(255, 205, 205)
+    COLOR_PAGADA = QColor(215, 245, 215)
+
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
-        self.tabla = QTableWidget(0, 4)
-        self.tabla.setHorizontalHeaderLabels(["Número", "Cliente", "Estado de pago", "Total"])
+        self.tabla = QTableWidget(0, 6)
+        self.tabla.setHorizontalHeaderLabels(
+            ["Número", "Cliente", "Fecha", "Estado de pago", "Fecha de pago", "Total"])
+        self.tabla.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tabla.setSelectionMode(QTableWidget.SingleSelection)
+        self.tabla.setEditTriggers(QTableWidget.NoEditTriggers)
         layout.addWidget(self.tabla)
+
+        acciones = QHBoxLayout()
+        self.btn_pagada = QPushButton("Marcar como pagada")
+        self.btn_vencida = QPushButton("Marcar como vencida")
+        self.btn_pagada.clicked.connect(self.marcar_pagada)
+        self.btn_vencida.clicked.connect(self.marcar_vencida)
+        acciones.addWidget(self.btn_pagada)
+        acciones.addWidget(self.btn_vencida)
+        acciones.addStretch()
+        layout.addLayout(acciones)
+        self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
         self.refrescar()
+
+    def _actualizar_acciones(self):
+        fila = self.tabla.currentRow()
+        estado = self.tabla.item(fila, 3).text() if fila >= 0 else None
+        self.btn_pagada.setEnabled(estado in ("pendiente", "vencida"))
+        self.btn_vencida.setEnabled(estado == "pendiente")
+
+    def _id_seleccionado(self):
+        fila = self.tabla.currentRow()
+        item = self.tabla.item(fila, 0) if fila >= 0 else None
+        return item.data(Qt.UserRole) if item else None
 
     def refrescar(self):
         conn = db.get_connection()
         filas = conn.execute("""
-            SELECT f.numero, cl.nombre AS cliente, f.estado_pago, f.total
+            SELECT f.id, f.numero, cl.nombre AS cliente, f.fecha, f.estado_pago, f.fecha_pago, f.total
             FROM facturas f JOIN clientes cl ON cl.id = f.cliente_id
             ORDER BY f.id DESC
         """).fetchall()
         conn.close()
+        sel_id = self._id_seleccionado()
         self.tabla.setRowCount(len(filas))
         for i, fila in enumerate(filas):
-            self.tabla.setItem(i, 0, QTableWidgetItem(fila["numero"]))
-            self.tabla.setItem(i, 1, QTableWidgetItem(fila["cliente"]))
-            self.tabla.setItem(i, 2, QTableWidgetItem(fila["estado_pago"]))
-            self.tabla.setItem(i, 3, QTableWidgetItem(f"{fila['total']:.2f}"))
+            valores = [fila["numero"], fila["cliente"], fila["fecha"], fila["estado_pago"],
+                       fila["fecha_pago"] or "", f"{fila['total']:.2f}"]
+            color = {"vencida": self.COLOR_VENCIDA, "pagada": self.COLOR_PAGADA}.get(fila["estado_pago"])
+            for c, v in enumerate(valores):
+                it = QTableWidgetItem(v)
+                if c == 0:
+                    it.setData(Qt.UserRole, fila["id"])
+                if color:
+                    it.setBackground(color)
+                self.tabla.setItem(i, c, it)
+            if fila["id"] == sel_id:
+                self.tabla.setCurrentCell(i, 0)
+        self._actualizar_acciones()
+
+    def _aplicar(self, funcion, *args):
+        conn = db.get_connection()
+        try:
+            funcion(*args, conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Factura", str(e))
+            return
+        finally:
+            conn.close()
+        self.refrescar()
+
+    def marcar_pagada(self):
+        fid = self._id_seleccionado()
+        if fid is None:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Fecha de pago")
+        form = QFormLayout(dlg)
+        fecha = QDateEdit(QDate.currentDate())
+        fecha.setCalendarPopup(True)
+        fecha.setDisplayFormat("yyyy-MM-dd")
+        form.addRow("Fecha de pago:", fecha)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        form.addRow(bb)
+        if dlg.exec():
+            self._aplicar(db.marcar_factura_pagada, fid, fecha.date().toString("yyyy-MM-dd"))
+
+    def marcar_vencida(self):
+        fid = self._id_seleccionado()
+        if fid is not None:
+            self._aplicar(db.marcar_factura_vencida, fid)
 
 
 class MainWindow(QMainWindow):

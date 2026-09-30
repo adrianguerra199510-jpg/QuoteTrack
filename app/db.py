@@ -61,6 +61,10 @@ def get_connection() -> sqlite3.Connection:
 def init_db() -> None:
     conn = get_connection()
     conn.executescript(SCHEMA)
+    # Migración: bases creadas antes de existir la fecha de pago
+    columnas = [c["name"] for c in conn.execute("PRAGMA table_info(facturas)")]
+    if "fecha_pago" not in columnas:
+        conn.execute("ALTER TABLE facturas ADD COLUMN fecha_pago TEXT")
     conn.commit()
     conn.close()
 
@@ -158,3 +162,26 @@ def generar_factura(cotizacion_id: int, conn: sqlite3.Connection) -> str:
     )
     conn.commit()
     return numero
+
+
+def marcar_factura_pagada(factura_id: int, fecha_pago: str, conn: sqlite3.Connection) -> None:
+    fila = conn.execute("SELECT estado_pago FROM facturas WHERE id = ?", (factura_id,)).fetchone()
+    if fila is None:
+        raise ValueError("La factura no existe.")
+    if fila["estado_pago"] == "pagada":
+        raise ValueError("La factura ya está pagada.")
+    conn.execute(
+        "UPDATE facturas SET estado_pago = 'pagada', fecha_pago = ? WHERE id = ?",
+        (fecha_pago, factura_id),
+    )
+    conn.commit()
+
+
+def marcar_factura_vencida(factura_id: int, conn: sqlite3.Connection) -> None:
+    fila = conn.execute("SELECT estado_pago FROM facturas WHERE id = ?", (factura_id,)).fetchone()
+    if fila is None:
+        raise ValueError("La factura no existe.")
+    if fila["estado_pago"] != "pendiente":
+        raise ValueError("Solo una factura pendiente puede marcarse como vencida.")
+    conn.execute("UPDATE facturas SET estado_pago = 'vencida' WHERE id = ?", (factura_id,))
+    conn.commit()
