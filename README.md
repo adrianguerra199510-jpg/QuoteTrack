@@ -23,7 +23,7 @@ Proyecto en fase inicial (scaffold). Pensado para desarrollarse con Claude Code.
   - [x] Generar factura desde cotización aprobada (`FAC-AAAA-NNNN`, estado `pendiente`, una sola factura por cotización)
   - [x] Seguimiento de pago: marcar como pagada (con fecha de pago) o vencida; filas vencidas en rojo y pagadas en verde
 - [x] **Clientes**: catálogo básico de clientes (nombre, RUC/cédula, contacto).
-- [ ] **Reportes**: exportar cotización o factura a PDF.
+- [x] **Reportes**: exportar cotización o factura a PDF (botón "Exportar PDF" en ambas pestañas, con reportlab).
 
 ## Instalación (desarrollo)
 

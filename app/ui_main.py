@@ -10,12 +10,25 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QLineEdit, QLabel, QFormLayout,
     QComboBox, QMessageBox, QDialog, QDialogButtonBox, QHeaderView,
-    QDateEdit
+    QDateEdit, QFileDialog
 )
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QColor
 
-from app import db
+from app import db, pdf
+
+
+def exportar_pdf(parent, funcion, registro_id, numero):
+    """Pide la ruta de destino y exporta con `funcion` (pdf.exportar_*)."""
+    ruta, _ = QFileDialog.getSaveFileName(parent, "Exportar PDF", f"{numero}.pdf", "PDF (*.pdf)")
+    if not ruta:
+        return
+    try:
+        funcion(registro_id, ruta)
+    except (ValueError, OSError) as e:
+        QMessageBox.warning(parent, "Exportar PDF", f"No se pudo exportar el PDF:\n{e}")
+        return
+    QMessageBox.information(parent, "Exportar PDF", f"PDF guardado en:\n{ruta}")
 
 
 class ClientesTab(QWidget):
@@ -247,6 +260,9 @@ class CotizacionesTab(QWidget):
         self.btn_factura = QPushButton("Generar factura")
         self.btn_factura.clicked.connect(self.generar_factura)
         acciones.addWidget(self.btn_factura)
+        btn_pdf = QPushButton("Exportar PDF")
+        btn_pdf.clicked.connect(self.exportar_pdf)
+        acciones.addWidget(btn_pdf)
         layout.addLayout(acciones)
 
         self.refrescar()
@@ -305,6 +321,11 @@ class CotizacionesTab(QWidget):
         finally:
             conn.close()
         self.refrescar()
+
+    def exportar_pdf(self):
+        sel = self._seleccionada()
+        if sel:
+            exportar_pdf(self, pdf.exportar_cotizacion, sel[0], sel[1])
 
     def generar_factura(self):
         sel = self._seleccionada()
@@ -377,6 +398,9 @@ class FacturasTab(QWidget):
         self.btn_vencida.clicked.connect(self.marcar_vencida)
         acciones.addWidget(self.btn_pagada)
         acciones.addWidget(self.btn_vencida)
+        btn_pdf = QPushButton("Exportar PDF")
+        btn_pdf.clicked.connect(self.exportar_pdf)
+        acciones.addWidget(btn_pdf)
         acciones.addStretch()
         layout.addLayout(acciones)
         self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
@@ -446,6 +470,13 @@ class FacturasTab(QWidget):
         form.addRow(bb)
         if dlg.exec():
             self._aplicar(db.marcar_factura_pagada, fid, fecha.date().toString("yyyy-MM-dd"))
+
+    def exportar_pdf(self):
+        fid = self._id_seleccionado()
+        if fid is None:
+            QMessageBox.information(self, "Selecciona una factura", "Selecciona una factura de la tabla.")
+            return
+        exportar_pdf(self, pdf.exportar_factura, fid, self.tabla.item(self.tabla.currentRow(), 0).text())
 
     def marcar_vencida(self):
         fid = self._id_seleccionado()
