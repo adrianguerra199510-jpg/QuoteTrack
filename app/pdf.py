@@ -1,7 +1,7 @@
 """Exportación de cotizaciones y facturas a PDF con reportlab."""
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
@@ -14,6 +14,35 @@ def _dinero(valor: float) -> str:
 
 def _esc(texto: str) -> str:
     return (texto or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _estilos():
+    """Estilos base con interlineado explícito para que las líneas del encabezado no se solapen."""
+    estilos = getSampleStyleSheet()
+    estilos["Title"].leading = 32
+    estilos["Title"].spaceAfter = 12
+    estilos["Normal"].leading = 15
+    estilos["Normal"].spaceAfter = 2
+    estilos["Heading3"].leading = 18
+    estilos["Heading3"].spaceBefore = 6
+    estilos["Heading3"].spaceAfter = 4
+    estilos.add(ParagraphStyle("Notas", parent=estilos["Normal"], leading=14, spaceAfter=0))
+    return estilos
+
+
+def _bloque_notas(estilos, notas):
+    """Notas bajo el total: respeta saltos de línea y Platypus las parte entre páginas si no caben."""
+    if not (notas or "").strip():
+        return []
+    lineas = []
+    for linea in notas.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        sangria = len(linea) - len(linea.lstrip(" "))
+        lineas.append("&nbsp;" * sangria + _esc(linea.strip()) if linea.strip() else "&nbsp;")
+    return [
+        Spacer(1, 0.8 * cm),
+        Paragraph("Alcance, exclusiones y condiciones", estilos["Heading3"]),
+        Paragraph("<br/>".join(lineas), estilos["Notas"]),
+    ]
 
 
 def _encabezado(estilos, titulo, numero, fecha, cliente, extra=()):
@@ -52,7 +81,7 @@ def _tabla_totales(subtotal, itbms, total):
     return t
 
 
-def exportar_cotizacion(cotizacion_id: int, ruta: str) -> None:
+def exportar_cotizacion(cotizacion_id: int, ruta: str, mostrar_borrador: bool = False) -> None:
     conn = db.get_connection()
     try:
         cot = conn.execute("SELECT * FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()
@@ -63,11 +92,12 @@ def exportar_cotizacion(cotizacion_id: int, ruta: str) -> None:
     finally:
         conn.close()
 
-    estilos = getSampleStyleSheet()
+    estilos = _estilos()
     doc = SimpleDocTemplate(ruta, pagesize=letter, title=f"Cotización {cot['numero']}",
                             leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm, bottomMargin=2 * cm)
-    elementos = _encabezado(estilos, "COTIZACIÓN", cot["numero"], cot["fecha"], cliente,
-                            extra=[("Estado", cot["estado"])])
+    # El estado "borrador" solo se imprime si se pide expresamente
+    extra = [] if (cot["estado"] == "borrador" and not mostrar_borrador) else [("Estado", cot["estado"])]
+    elementos = _encabezado(estilos, "COTIZACIÓN", cot["numero"], cot["fecha"], cliente, extra=extra)
 
     filas = [["Descripción", "Cantidad", "Precio unitario", "Importe"]]
     for desc, cant, precio in items:
@@ -81,8 +111,7 @@ def exportar_cotizacion(cotizacion_id: int, ruta: str) -> None:
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
     elementos += [tabla, Spacer(1, 0.5 * cm), _tabla_totales(cot["subtotal"], cot["itbms"], cot["total"])]
-    if cot["notas"]:
-        elementos += [Spacer(1, 0.7 * cm), Paragraph(f"<b>Notas:</b> {_esc(cot['notas'])}", estilos["Normal"])]
+    elementos += _bloque_notas(estilos, cot["notas"])
     doc.build(elementos)
 
 
@@ -112,9 +141,10 @@ def exportar_factura(factura_id: int, ruta: str) -> None:
     if cot:
         extra.append(("Cotización de origen", cot["numero"]))
 
-    estilos = getSampleStyleSheet()
+    estilos = _estilos()
     doc = SimpleDocTemplate(ruta, pagesize=letter, title=f"Factura {fac['numero']}",
                             leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm, bottomMargin=2 * cm)
     elementos = _encabezado(estilos, "FACTURA", fac["numero"], fac["fecha"], cliente, extra=extra)
     elementos.append(_tabla_totales(subtotal, itbms, fac["total"]))
+    elementos += _bloque_notas(estilos, fac["notas"])
     doc.build(elementos)

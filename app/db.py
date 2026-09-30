@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS cotizaciones (
     subtotal REAL NOT NULL DEFAULT 0,
     itbms REAL NOT NULL DEFAULT 0,
     total REAL NOT NULL DEFAULT 0,
-    notas TEXT
+    notas TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS cotizacion_items (
@@ -44,6 +44,11 @@ CREATE TABLE IF NOT EXISTS facturas (
     fecha TEXT NOT NULL,
     estado_pago TEXT NOT NULL DEFAULT 'pendiente',  -- pendiente, pagada, vencida
     total REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS configuracion (
+    clave TEXT PRIMARY KEY,
+    valor TEXT NOT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_facturas_cotizacion
@@ -65,6 +70,10 @@ def init_db() -> None:
     columnas = [c["name"] for c in conn.execute("PRAGMA table_info(facturas)")]
     if "fecha_pago" not in columnas:
         conn.execute("ALTER TABLE facturas ADD COLUMN fecha_pago TEXT")
+    # Migración: notas / términos y condiciones (vacío por defecto en registros existentes)
+    if "notas" not in columnas:
+        conn.execute("ALTER TABLE facturas ADD COLUMN notas TEXT NOT NULL DEFAULT ''")
+    conn.execute("UPDATE cotizaciones SET notas = '' WHERE notas IS NULL")
     conn.commit()
     conn.close()
 
@@ -156,9 +165,10 @@ def generar_factura(cotizacion_id: int, conn: sqlite3.Connection) -> str:
         raise ValueError(f"Esta cotización ya tiene la factura {existente['numero']}.")
     numero = next_numero("FAC", "facturas", conn)
     conn.execute(
-        "INSERT INTO facturas (numero, cotizacion_id, cliente_id, fecha, estado_pago, total) "
-        "VALUES (?, ?, ?, ?, 'pendiente', ?)",
-        (numero, cotizacion_id, cot["cliente_id"], date.today().isoformat(), cot["total"]),
+        "INSERT INTO facturas (numero, cotizacion_id, cliente_id, fecha, estado_pago, total, notas) "
+        "VALUES (?, ?, ?, ?, 'pendiente', ?, ?)",
+        (numero, cotizacion_id, cot["cliente_id"], date.today().isoformat(), cot["total"],
+         cot["notas"] or ""),
     )
     conn.commit()
     return numero
@@ -184,4 +194,48 @@ def marcar_factura_vencida(factura_id: int, conn: sqlite3.Connection) -> None:
     if fila["estado_pago"] != "pendiente":
         raise ValueError("Solo una factura pendiente puede marcarse como vencida.")
     conn.execute("UPDATE facturas SET estado_pago = 'vencida' WHERE id = ?", (factura_id,))
+    conn.commit()
+
+
+PLANTILLA_NOTAS_INICIAL = (
+    "ALCANCE\n"
+    "- Descripción de los trabajos o productos incluidos en esta cotización.\n\n"
+    "EXCLUSIONES\n"
+    "- Todo lo que no esté detallado en las líneas de esta cotización.\n\n"
+    "CONDICIONES\n"
+    "- Validez de la oferta: 15 días.\n"
+    "- Forma de pago: 50% al aprobar, 50% al entregar.\n"
+    "- Los precios no incluyen ITBMS salvo que se indique lo contrario."
+)
+
+
+def obtener_config(clave: str, conn: sqlite3.Connection, defecto: str = "") -> str:
+    fila = conn.execute("SELECT valor FROM configuracion WHERE clave = ?", (clave,)).fetchone()
+    return fila["valor"] if fila else defecto
+
+
+def guardar_config(clave: str, valor: str, conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT INTO configuracion (clave, valor) VALUES (?, ?) "
+        "ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor",
+        (clave, valor),
+    )
+    conn.commit()
+
+
+def obtener_plantilla_notas(conn: sqlite3.Connection) -> str:
+    return obtener_config("plantilla_notas", conn, PLANTILLA_NOTAS_INICIAL)
+
+
+def guardar_plantilla_notas(texto: str, conn: sqlite3.Connection) -> None:
+    guardar_config("plantilla_notas", texto, conn)
+
+
+def obtener_notas(cotizacion_id: int, conn: sqlite3.Connection) -> str:
+    fila = conn.execute("SELECT notas FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()
+    return (fila["notas"] or "") if fila else ""
+
+
+def guardar_notas(cotizacion_id: int, notas: str, conn: sqlite3.Connection) -> None:
+    conn.execute("UPDATE cotizaciones SET notas = ? WHERE id = ?", (notas, cotizacion_id))
     conn.commit()

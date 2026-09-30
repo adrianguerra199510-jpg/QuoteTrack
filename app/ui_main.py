@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QLineEdit, QLabel, QFormLayout,
     QComboBox, QMessageBox, QDialog, QDialogButtonBox, QHeaderView,
-    QDateEdit, QFileDialog
+    QDateEdit, QFileDialog, QPlainTextEdit, QCheckBox
 )
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QColor
@@ -18,13 +18,13 @@ from PySide6.QtGui import QColor
 from app import db, pdf
 
 
-def exportar_pdf(parent, funcion, registro_id, numero):
+def exportar_pdf(parent, funcion, registro_id, numero, **opciones):
     """Pide la ruta de destino y exporta con `funcion` (pdf.exportar_*)."""
     ruta, _ = QFileDialog.getSaveFileName(parent, "Exportar PDF", f"{numero}.pdf", "PDF (*.pdf)")
     if not ruta:
         return
     try:
-        funcion(registro_id, ruta)
+        funcion(registro_id, ruta, **opciones)
     except (ValueError, OSError) as e:
         QMessageBox.warning(parent, "Exportar PDF", f"No se pudo exportar el PDF:\n{e}")
         return
@@ -124,7 +124,7 @@ class ItemsDialog(QDialog):
         self.editable = editable
         self._cargando = False
         self.setWindowTitle(f"Items de {numero}")
-        self.resize(700, 450)
+        self.resize(700, 620)
         layout = QVBoxLayout(self)
 
         self.tabla = QTableWidget(0, 4)
@@ -147,6 +147,21 @@ class ItemsDialog(QDialog):
         self.lbl_totales.setAlignment(Qt.AlignRight)
         layout.addWidget(self.lbl_totales)
 
+        fila_notas = QHBoxLayout()
+        fila_notas.addWidget(QLabel("Notas / Términos y condiciones:"))
+        fila_notas.addStretch()
+        self.btn_plantilla = QPushButton("Insertar plantilla")
+        self.btn_editar_plantilla = QPushButton("Editar plantilla…")
+        self.btn_plantilla.clicked.connect(self.insertar_plantilla)
+        self.btn_editar_plantilla.clicked.connect(self.editar_plantilla)
+        fila_notas.addWidget(self.btn_plantilla)
+        fila_notas.addWidget(self.btn_editar_plantilla)
+        layout.addLayout(fila_notas)
+        self.notas_edit = QPlainTextEdit()
+        self.notas_edit.setPlaceholderText("Alcance, exclusiones y condiciones que saldrán en el PDF…")
+        self.notas_edit.setMaximumHeight(140)
+        layout.addWidget(self.notas_edit)
+
         bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         bb.button(QDialogButtonBox.Save).setText("Guardar")
         bb.button(QDialogButtonBox.Cancel).setText("Cancelar")
@@ -157,12 +172,15 @@ class ItemsDialog(QDialog):
         if not editable:
             self.btn_agregar.setEnabled(False)
             self.btn_quitar.setEnabled(False)
+            self.btn_plantilla.setEnabled(False)
+            self.notas_edit.setReadOnly(True)
             self.tabla.setEditTriggers(QTableWidget.NoEditTriggers)
             bb.button(QDialogButtonBox.Save).setEnabled(False)
             self.setWindowTitle(f"Items de {numero} (solo lectura)")
 
         conn = db.get_connection()
         items = db.obtener_items(cotizacion_id, conn)
+        self.notas_edit.setPlainText(db.obtener_notas(cotizacion_id, conn))
         conn.close()
         for desc, cant, precio in items:
             self.agregar_fila(desc, cant, precio)
@@ -241,6 +259,35 @@ class ItemsDialog(QDialog):
             f"<b>Total: {total:,.2f}</b>"
         )
 
+    def insertar_plantilla(self):
+        """Inserta la plantilla por defecto en la posición del cursor."""
+        conn = db.get_connection()
+        plantilla = db.obtener_plantilla_notas(conn)
+        conn.close()
+        self.notas_edit.insertPlainText(plantilla)
+        self.notas_edit.setFocus()
+
+    def editar_plantilla(self):
+        conn = db.get_connection()
+        actual = db.obtener_plantilla_notas(conn)
+        conn.close()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Plantilla de notas por defecto")
+        dlg.resize(550, 400)
+        lay = QVBoxLayout(dlg)
+        editor = QPlainTextEdit(actual)
+        lay.addWidget(editor)
+        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Save).setText("Guardar")
+        bb.button(QDialogButtonBox.Cancel).setText("Cancelar")
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if dlg.exec():
+            conn = db.get_connection()
+            db.guardar_plantilla_notas(editor.toPlainText(), conn)
+            conn.close()
+
     def guardar(self):
         items, error = self._leer_items()
         if error:
@@ -248,6 +295,7 @@ class ItemsDialog(QDialog):
             return
         conn = db.get_connection()
         db.guardar_items(self.cotizacion_id, items, conn)
+        db.guardar_notas(self.cotizacion_id, self.notas_edit.toPlainText().strip("\n"), conn)
         conn.close()
         self.accept()
 
@@ -297,6 +345,8 @@ class CotizacionesTab(QWidget):
         btn_pdf = QPushButton("Exportar PDF")
         btn_pdf.clicked.connect(self.exportar_pdf)
         acciones.addWidget(btn_pdf)
+        self.chk_borrador = QCheckBox("Mostrar «borrador» en el PDF")
+        acciones.addWidget(self.chk_borrador)
         layout.addLayout(acciones)
 
         self.refrescar()
@@ -365,7 +415,8 @@ class CotizacionesTab(QWidget):
     def exportar_pdf(self):
         sel = self._seleccionada()
         if sel:
-            exportar_pdf(self, pdf.exportar_cotizacion, sel[0], sel[1])
+            exportar_pdf(self, pdf.exportar_cotizacion, sel[0], sel[1],
+                         mostrar_borrador=self.chk_borrador.isChecked())
 
     def generar_factura(self):
         sel = self._seleccionada()
