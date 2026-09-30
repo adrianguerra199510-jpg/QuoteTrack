@@ -20,6 +20,8 @@ Proyecto en fase inicial (scaffold). Pensado para desarrollarse con Claude Code.
   - [x] Cambio de estado: borrador → enviada → aprobada / rechazada (para enviar se requiere al menos una línea)
   - [ ] Búsqueda y filtros
 - [ ] **Facturas**: generar factura a partir de una cotización aprobada, numeración consecutiva, listado y seguimiento de pago (pendiente / pagada / vencida).
+  - [x] Generar factura desde cotización aprobada (`FAC-AAAA-NNNN`, estado `pendiente`, una sola factura por cotización)
+  - [ ] Seguimiento de pago
 - [x] **Clientes**: catálogo básico de clientes (nombre, RUC/cédula, contacto).
 - [ ] **Reportes**: exportar cotización o factura a PDF.
 

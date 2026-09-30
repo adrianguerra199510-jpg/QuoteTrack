@@ -207,8 +207,9 @@ class ItemsDialog(QDialog):
 
 
 class CotizacionesTab(QWidget):
-    def __init__(self):
+    def __init__(self, on_factura_generada=None):
         super().__init__()
+        self.on_factura_generada = on_factura_generada
         layout = QVBoxLayout(self)
 
         top = QHBoxLayout()
@@ -241,6 +242,9 @@ class CotizacionesTab(QWidget):
         self.btn_estado = QPushButton("Aplicar")
         self.btn_estado.clicked.connect(self.cambiar_estado)
         acciones.addWidget(self.btn_estado)
+        self.btn_factura = QPushButton("Generar factura")
+        self.btn_factura.clicked.connect(self.generar_factura)
+        acciones.addWidget(self.btn_factura)
         layout.addLayout(acciones)
 
         self.refrescar()
@@ -284,6 +288,7 @@ class CotizacionesTab(QWidget):
         if fila >= 0:
             self.estado_combo.addItems(db.TRANSICIONES_COTIZACION.get(self.tabla.item(fila, 3).text(), []))
         self.btn_estado.setEnabled(self.estado_combo.count() > 0)
+        self.btn_factura.setEnabled(fila >= 0 and self.tabla.item(fila, 3).text() == "aprobada")
 
     def cambiar_estado(self):
         sel = self._seleccionada()
@@ -298,6 +303,22 @@ class CotizacionesTab(QWidget):
         finally:
             conn.close()
         self.refrescar()
+
+    def generar_factura(self):
+        sel = self._seleccionada()
+        if not sel:
+            return
+        conn = db.get_connection()
+        try:
+            numero = db.generar_factura(sel[0], conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Generar factura", str(e))
+            return
+        finally:
+            conn.close()
+        QMessageBox.information(self, "Factura generada", f"Se creó la factura {numero}.")
+        if self.on_factura_generada:
+            self.on_factura_generada()
 
     def _seleccionada(self):
         fila = self.tabla.currentRow()
@@ -336,10 +357,6 @@ class FacturasTab(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(
-            "Pendiente: generar factura a partir de una cotización aprobada.\n"
-            "(placeholder — siguiente paso de desarrollo)"
-        ))
         self.tabla = QTableWidget(0, 4)
         self.tabla.setHorizontalHeaderLabels(["Número", "Cliente", "Estado de pago", "Total"])
         layout.addWidget(self.tabla)
@@ -367,10 +384,14 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("QuoteTrack — Cotizaciones y Facturas")
         self.resize(900, 600)
 
+        self.clientes_tab = ClientesTab()
+        self.facturas_tab = FacturasTab()
+        self.cotizaciones_tab = CotizacionesTab(on_factura_generada=self.facturas_tab.refrescar)
         tabs = QTabWidget()
-        tabs.addTab(ClientesTab(), "Clientes")
-        tabs.addTab(CotizacionesTab(), "Cotizaciones")
-        tabs.addTab(FacturasTab(), "Facturas")
+        tabs.addTab(self.clientes_tab, "Clientes")
+        tabs.addTab(self.cotizaciones_tab, "Cotizaciones")
+        tabs.addTab(self.facturas_tab, "Facturas")
+        tabs.currentChanged.connect(lambda i: tabs.widget(i).refrescar())
         self.setCentralWidget(tabs)
 
 

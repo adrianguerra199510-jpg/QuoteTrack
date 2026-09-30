@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS facturas (
     estado_pago TEXT NOT NULL DEFAULT 'pendiente',  -- pendiente, pagada, vencida
     total REAL NOT NULL DEFAULT 0
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_facturas_cotizacion
+    ON facturas(cotizacion_id) WHERE cotizacion_id IS NOT NULL;
 """
 
 
@@ -132,3 +135,26 @@ def cambiar_estado_cotizacion(cotizacion_id: int, nuevo: str, conn: sqlite3.Conn
         raise ValueError("Agrega al menos una línea antes de enviar la cotización.")
     conn.execute("UPDATE cotizaciones SET estado = ? WHERE id = ?", (nuevo, cotizacion_id))
     conn.commit()
+
+
+def generar_factura(cotizacion_id: int, conn: sqlite3.Connection) -> str:
+    """Crea la factura de una cotización aprobada y devuelve su número.
+    Lanza ValueError si la cotización no está aprobada o ya tiene factura."""
+    cot = conn.execute("SELECT * FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()
+    if cot is None:
+        raise ValueError("La cotización no existe.")
+    if cot["estado"] != "aprobada":
+        raise ValueError("Solo se puede facturar una cotización aprobada.")
+    existente = conn.execute(
+        "SELECT numero FROM facturas WHERE cotizacion_id = ?", (cotizacion_id,)
+    ).fetchone()
+    if existente:
+        raise ValueError(f"Esta cotización ya tiene la factura {existente['numero']}.")
+    numero = next_numero("FAC", "facturas", conn)
+    conn.execute(
+        "INSERT INTO facturas (numero, cotizacion_id, cliente_id, fecha, estado_pago, total) "
+        "VALUES (?, ?, ?, ?, 'pendiente', ?)",
+        (numero, cotizacion_id, cot["cliente_id"], date.today().isoformat(), cot["total"]),
+    )
+    conn.commit()
+    return numero
