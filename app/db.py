@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import date
 
 from app import calculo
-from app.calculo import Cargo, Linea
+from app.calculo import Apu, Cargo, ConfigApu, Concepto, Indirecto, Insumo, Linea
 
 DB_PATH = Path(__file__).resolve().parent.parent / "quotetrack.db"
 
@@ -76,6 +76,49 @@ CREATE TABLE IF NOT EXISTS cotizacion_cargos (
     aplica_itbms INTEGER NOT NULL DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS apu_insumos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER NOT NULL REFERENCES cotizacion_items(id) ON DELETE CASCADE,
+    categoria TEXT NOT NULL,                 -- material | mano_obra | auxiliar | subcontrato
+    descripcion TEXT NOT NULL DEFAULT '',
+    unidad TEXT NOT NULL DEFAULT '',
+    rendimiento REAL NOT NULL DEFAULT 1,
+    coeficiente REAL NOT NULL DEFAULT 1,
+    precio REAL NOT NULL DEFAULT 0,
+    ref_categoria TEXT NOT NULL DEFAULT ''   -- si se indica, el precio es el coste de esa categoría
+);
+
+CREATE TABLE IF NOT EXISTS cotizacion_indirectos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cotizacion_id INTEGER NOT NULL REFERENCES cotizaciones(id) ON DELETE CASCADE,
+    concepto TEXT NOT NULL DEFAULT '',
+    cantidad REAL NOT NULL DEFAULT 1,
+    periodo REAL NOT NULL DEFAULT 1,
+    costo REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS conceptos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    descripcion TEXT NOT NULL,
+    unidad TEXT NOT NULL DEFAULT '',
+    modalidad TEXT NOT NULL DEFAULT 'servicio',   -- servicio | obra
+    precio REAL NOT NULL DEFAULT 0,               -- precio unitario del servicio profesional
+    categoria TEXT NOT NULL DEFAULT '',
+    apu_base REAL NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS concepto_insumos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    concepto_id INTEGER NOT NULL REFERENCES conceptos(id) ON DELETE CASCADE,
+    categoria TEXT NOT NULL,
+    descripcion TEXT NOT NULL DEFAULT '',
+    unidad TEXT NOT NULL DEFAULT '',
+    rendimiento REAL NOT NULL DEFAULT 1,
+    coeficiente REAL NOT NULL DEFAULT 1,
+    precio REAL NOT NULL DEFAULT 0,
+    ref_categoria TEXT NOT NULL DEFAULT ''
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_facturas_cotizacion
     ON facturas(cotizacion_id) WHERE cotizacion_id IS NOT NULL;
 """
@@ -135,6 +178,12 @@ def init_db() -> None:
     _agregar_columna(conn, "cotizacion_items", "tipo", "TEXT NOT NULL DEFAULT 'item'")
     _agregar_columna(conn, "cotizacion_items", "nivel", "INTEGER NOT NULL DEFAULT 0")
     _agregar_columna(conn, "cotizacion_items", "aplica_itbms", "INTEGER NOT NULL DEFAULT 1")
+    # Migración: unidad, modalidad (servicio / mano de obra y material) y análisis de precio unitario
+    _agregar_columna(conn, "cotizacion_items", "unidad", "TEXT NOT NULL DEFAULT ''")
+    _agregar_columna(conn, "cotizacion_items", "modalidad", "TEXT NOT NULL DEFAULT 'servicio'")
+    _agregar_columna(conn, "cotizacion_items", "apu_base", "REAL NOT NULL DEFAULT 1")
+    for cat in calculo.CATEGORIAS:
+        _agregar_columna(conn, "cotizaciones", f"apu_coef_{cat}", "REAL")   # en %, NULL = valor por defecto
     _migrar_empresa_inicial(conn)
     conn.commit()
     conn.close()
@@ -153,14 +202,26 @@ def next_numero(prefijo: str, tabla: str, conn: sqlite3.Connection) -> str:
 ITBMS_RATE = 0.07  # ITBMS Panamá 7% (tasa por defecto de una empresa nueva)
 
 
+def _insumos_de(filas) -> list[Insumo]:
+    return [Insumo(f["categoria"], f["descripcion"], f["unidad"], f["rendimiento"], f["coeficiente"],
+                   f["precio"], f["ref_categoria"]) for f in filas]
+
+
 def obtener_lineas(cotizacion_id: int, conn: sqlite3.Connection) -> list[Linea]:
     filas = conn.execute(
-        "SELECT tipo, nivel, descripcion, cantidad, precio_unitario, aplica_itbms "
+        "SELECT id, tipo, nivel, descripcion, cantidad, precio_unitario, aplica_itbms, unidad, modalidad, apu_base "
         "FROM cotizacion_items WHERE cotizacion_id = ? ORDER BY id",
         (cotizacion_id,),
     ).fetchall()
-    return [Linea(f["tipo"], f["nivel"], f["descripcion"], f["cantidad"], f["precio_unitario"],
-                  bool(f["aplica_itbms"])) for f in filas]
+    lineas = []
+    for f in filas:
+        apu = None
+        if f["modalidad"] == calculo.OBRA:
+            apu = Apu(f["apu_base"], _insumos_de(conn.execute(
+                "SELECT * FROM apu_insumos WHERE item_id = ? ORDER BY id", (f["id"],)).fetchall()))
+        lineas.append(Linea(f["tipo"], f["nivel"], f["descripcion"], f["cantidad"], f["precio_unitario"],
+                            bool(f["aplica_itbms"]), f["unidad"], f["modalidad"], apu))
+    return lineas
 
 
 def obtener_cargos(cotizacion_id: int, conn: sqlite3.Connection) -> list[Cargo]:
@@ -193,29 +254,77 @@ def tasa_de_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> float:
 
 def totales_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> calculo.Totales:
     return calculo.calcular(obtener_lineas(cotizacion_id, conn), obtener_cargos(cotizacion_id, conn),
-                            tasa_de_cotizacion(cotizacion_id, conn))
+                            tasa_de_cotizacion(cotizacion_id, conn), obtener_config_apu(cotizacion_id, conn))
+
+
+def coef_apu_defecto(conn: sqlite3.Connection) -> ConfigApu:
+    """Coeficientes de venta por defecto (Configuración); sin indirectos."""
+    valores = {}
+    for cat in calculo.CATEGORIAS:
+        try:
+            valores[f"coef_{cat}"] = float(obtener_config(f"apu_coef_{cat}", conn, "15").replace(",", ".")) / 100
+        except ValueError:
+            valores[f"coef_{cat}"] = 0.15
+    return ConfigApu(**valores)
+
+
+def guardar_coef_apu_defecto(porcentajes: dict, conn: sqlite3.Connection) -> None:
+    """`porcentajes`: {'material': 15, 'mano_obra': 15, …} (en %)."""
+    for cat in calculo.CATEGORIAS:
+        if cat in porcentajes:
+            guardar_config(f"apu_coef_{cat}", str(float(porcentajes[cat])), conn)
+
+
+def obtener_config_apu(cotizacion_id: int, conn: sqlite3.Connection) -> ConfigApu:
+    """Coeficientes e indirectos de la cotización (los que no tenga fijados toman el valor por defecto)."""
+    cfg = coef_apu_defecto(conn)
+    fila = conn.execute("SELECT * FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()
+    if fila is not None:
+        for cat in calculo.CATEGORIAS:
+            if fila[f"apu_coef_{cat}"] is not None:
+                setattr(cfg, f"coef_{cat}", fila[f"apu_coef_{cat}"] / 100)
+    cfg.indirectos = [Indirecto(f["concepto"], f["cantidad"], f["periodo"], f["costo"]) for f in conn.execute(
+        "SELECT * FROM cotizacion_indirectos WHERE cotizacion_id = ? ORDER BY id", (cotizacion_id,))]
+    return cfg
 
 
 def guardar_cotizacion(cotizacion_id: int, lineas, cargos, conn: sqlite3.Connection,
-                       tasa: float | None = None) -> calculo.Totales:
-    """Reemplaza líneas y costos adicionales y actualiza los totales.
-    `tasa` (fracción) por defecto es la de la empresa de la cotización."""
+                       tasa: float | None = None, cfg: ConfigApu | None = None) -> calculo.Totales:
+    """Reemplaza líneas (con sus análisis de precio), costos adicionales y, si se indica, los coeficientes
+    e indirectos del APU; actualiza los totales. `tasa` (fracción) por defecto es la de la empresa."""
     lineas, cargos = list(lineas), list(cargos)
     if tasa is None:
         empresa = empresa_de_cotizacion(cotizacion_id, conn)
         tasa = empresa["itbms_tasa"] / 100 if empresa else 0.0
+    if cfg is None:
+        cfg = obtener_config_apu(cotizacion_id, conn)
+    else:
+        conn.execute(
+            "UPDATE cotizaciones SET " + ", ".join(f"apu_coef_{c} = ?" for c in calculo.CATEGORIAS) + " WHERE id = ?",
+            (*[cfg.coef(c) * 100 for c in calculo.CATEGORIAS], cotizacion_id))
+        conn.execute("DELETE FROM cotizacion_indirectos WHERE cotizacion_id = ?", (cotizacion_id,))
+        conn.executemany(
+            "INSERT INTO cotizacion_indirectos (cotizacion_id, concepto, cantidad, periodo, costo) VALUES (?, ?, ?, ?, ?)",
+            [(cotizacion_id, i.concepto, i.cantidad, i.periodo, i.costo) for i in cfg.indirectos])
+    t = calculo.calcular(lineas, cargos, tasa, cfg)        # fija el precio de los ítems con APU
     conn.execute("DELETE FROM cotizacion_items WHERE cotizacion_id = ?", (cotizacion_id,))
-    conn.executemany(
-        "INSERT INTO cotizacion_items (cotizacion_id, descripcion, cantidad, precio_unitario, tipo, nivel, aplica_itbms) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [(cotizacion_id, l.descripcion, l.cantidad, l.precio, l.tipo, l.nivel, int(l.aplica_itbms)) for l in lineas],
-    )
+    for l in lineas:
+        cur = conn.execute(
+            "INSERT INTO cotizacion_items (cotizacion_id, descripcion, cantidad, precio_unitario, tipo, nivel, "
+            "aplica_itbms, unidad, modalidad, apu_base) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (cotizacion_id, l.descripcion, l.cantidad, l.precio, l.tipo, l.nivel, int(l.aplica_itbms),
+             l.unidad, l.modalidad, l.apu.base if l.apu else 1.0))
+        if l.usa_apu and l.apu:
+            conn.executemany(
+                "INSERT INTO apu_insumos (item_id, categoria, descripcion, unidad, rendimiento, coeficiente, precio, "
+                "ref_categoria) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [(cur.lastrowid, i.categoria, i.descripcion, i.unidad, i.rendimiento, i.coeficiente, i.precio,
+                  i.ref_categoria) for i in l.apu.insumos])
     conn.execute("DELETE FROM cotizacion_cargos WHERE cotizacion_id = ?", (cotizacion_id,))
     conn.executemany(
         "INSERT INTO cotizacion_cargos (cotizacion_id, concepto, tipo, valor, aplica_itbms) VALUES (?, ?, ?, ?, ?)",
         [(cotizacion_id, c.concepto, c.tipo, c.valor, int(c.aplica_itbms)) for c in cargos],
     )
-    t = calculo.calcular(lineas, cargos, tasa)
     conn.execute(
         "UPDATE cotizaciones SET subtotal = ?, cargos = ?, itbms = ?, total = ?, itbms_tasa = ? WHERE id = ?",
         (t.subtotal, t.cargos_total, t.itbms, t.total, tasa, cotizacion_id),
@@ -240,6 +349,10 @@ def crear_cotizacion(cliente_id: int, conn: sqlite3.Connection, empresa_id: int 
         "INSERT INTO cotizaciones (numero, cliente_id, fecha, estado, empresa_id) VALUES (?, ?, ?, 'borrador', ?)",
         (numero, cliente_id, date.today().isoformat(), empresa_id),
     )
+    defecto = coef_apu_defecto(conn)      # la cotización conserva los coeficientes vigentes al crearla
+    conn.execute(
+        "UPDATE cotizaciones SET " + ", ".join(f"apu_coef_{c} = ?" for c in calculo.CATEGORIAS) + " WHERE id = ?",
+        (*[defecto.coef(c) * 100 for c in calculo.CATEGORIAS], cur.lastrowid))
     conn.commit()
     return cur.lastrowid, numero
 
@@ -427,6 +540,109 @@ OBSERVACIONES
 CONFIG_DEFECTOS = {
     "mostrar_estado_pdf": "0",
 }
+
+
+# ---------- Biblioteca de conceptos ----------
+
+def _guardar_insumos(conn, tabla, col, id_, insumos):
+    conn.execute(f"DELETE FROM {tabla} WHERE {col} = ?", (id_,))
+    conn.executemany(
+        f"INSERT INTO {tabla} ({col}, categoria, descripcion, unidad, rendimiento, coeficiente, precio, ref_categoria) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [(id_, i.categoria, i.descripcion, i.unidad, i.rendimiento, i.coeficiente, i.precio, i.ref_categoria)
+         for i in insumos])
+
+
+def _concepto(fila, conn) -> Concepto:
+    apu = None
+    if fila["modalidad"] == calculo.OBRA:
+        apu = Apu(fila["apu_base"], _insumos_de(conn.execute(
+            "SELECT * FROM concepto_insumos WHERE concepto_id = ? ORDER BY id", (fila["id"],)).fetchall()))
+    return Concepto(fila["id"], fila["descripcion"], fila["unidad"], fila["modalidad"], fila["precio"],
+                    fila["categoria"], apu)
+
+
+def guardar_concepto(c: Concepto, conn: sqlite3.Connection) -> int:
+    """Crea (o actualiza, si `c.id`) un concepto de la biblioteca. Lanza ValueError si no es válido."""
+    descripcion = (c.descripcion or "").strip()
+    if not descripcion:
+        raise ValueError("La descripción del concepto es obligatoria.")
+    if c.modalidad not in calculo.MODALIDADES:
+        raise ValueError("Modalidad no válida.")
+    base = c.apu.base if c.apu else 1.0
+    if base <= 0:
+        raise ValueError("La cantidad base del análisis debe ser mayor que cero.")
+    valores = (descripcion, (c.unidad or "").strip(), c.modalidad, 0.0 if c.modalidad == calculo.OBRA else c.precio,
+               (c.categoria or "").strip(), base)
+    if c.id is None:
+        cid = conn.execute("INSERT INTO conceptos (descripcion, unidad, modalidad, precio, categoria, apu_base) "
+                           "VALUES (?, ?, ?, ?, ?, ?)", valores).lastrowid
+    else:
+        cid = c.id
+        conn.execute("UPDATE conceptos SET descripcion = ?, unidad = ?, modalidad = ?, precio = ?, categoria = ?, "
+                     "apu_base = ? WHERE id = ?", (*valores, cid))
+    _guardar_insumos(conn, "concepto_insumos", "concepto_id", cid,
+                     c.apu.insumos if c.apu and c.modalidad == calculo.OBRA else [])
+    conn.commit()
+    return cid
+
+
+def obtener_concepto(concepto_id: int, conn: sqlite3.Connection) -> Concepto | None:
+    fila = conn.execute("SELECT * FROM conceptos WHERE id = ?", (concepto_id,)).fetchone()
+    return _concepto(fila, conn) if fila else None
+
+
+def listar_conceptos(conn: sqlite3.Connection, texto: str = "", modalidad: str | None = None) -> list[Concepto]:
+    condiciones, params = [], []
+    if texto.strip():
+        condiciones.append("(descripcion LIKE ? OR categoria LIKE ?)")
+        params += [f"%{texto.strip()}%"] * 2
+    if modalidad:
+        condiciones.append("modalidad = ?")
+        params.append(modalidad)
+    where = "WHERE " + " AND ".join(condiciones) if condiciones else ""
+    return [_concepto(f, conn) for f in conn.execute(
+        f"SELECT * FROM conceptos {where} ORDER BY categoria, descripcion", params).fetchall()]
+
+
+def eliminar_concepto(concepto_id: int, conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM conceptos WHERE id = ?", (concepto_id,))
+    conn.commit()
+
+
+def duplicar_concepto(concepto_id: int, conn: sqlite3.Connection) -> int:
+    c = obtener_concepto(concepto_id, conn)
+    if c is None:
+        raise ValueError("El concepto no existe.")
+    c.id = None
+    c.descripcion = f"{c.descripcion} (copia)"
+    return guardar_concepto(c, conn)
+
+
+def buscar_concepto(descripcion: str, unidad: str, conn: sqlite3.Connection) -> Concepto | None:
+    fila = conn.execute("SELECT * FROM conceptos WHERE descripcion = ? AND unidad = ?",
+                        (descripcion.strip(), (unidad or "").strip())).fetchone()
+    return _concepto(fila, conn) if fila else None
+
+
+def precio_referencial(c: Concepto, conn: sqlite3.Connection) -> float:
+    """Servicio: su precio. Mano de obra y material: precio de venta con los coeficientes por defecto."""
+    if c.modalidad == calculo.OBRA and c.apu:
+        return calculo.precio_unitario(c.apu, coef_apu_defecto(conn))
+    return c.precio
+
+
+def concepto_desde_linea(l: Linea, categoria: str = "") -> Concepto:
+    """Copia de un ítem de cotización para guardarlo en la biblioteca (con su análisis, si lo tiene)."""
+    return Concepto(None, l.descripcion, l.unidad, l.modalidad, 0.0 if l.usa_apu else l.precio, categoria,
+                    l.apu.copia() if l.usa_apu and l.apu else None)
+
+
+def linea_desde_concepto(c: Concepto, cantidad: float = 1.0, nivel: int = 0) -> Linea:
+    """Ítem de cotización listo para insertar a partir de un concepto de la biblioteca."""
+    usa = c.modalidad == calculo.OBRA
+    return Linea("item", nivel, c.descripcion, cantidad, c.precio, True, c.unidad, c.modalidad,
+                 (c.apu.copia() if c.apu else Apu()) if usa else None)
 
 
 def obtener_config(clave: str, conn: sqlite3.Connection, defecto: str = "") -> str:

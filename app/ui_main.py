@@ -4,17 +4,19 @@ import sys
 from PySide6.QtCore import QSize, Qt, QDate
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
+    QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame,
+    QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QStackedWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from app import db, estilo, iconos, pdf
+from app import calculo, db, estilo, iconos, pdf
 from app.recursos import ruta_recurso
 from app.ui_comun import (  # noqa: F401  (se reexportan para compatibilidad)
     DescripcionDelegate, FiltroBar, boton, celda_dinero, celda_estado, encabezado_pagina, exportar_pdf, pagina,
     parsear_numero, tabla_estandar,
 )
+from app.ui_biblioteca import BibliotecaTab
 from app.ui_empresas import EmpresasTab
 from app.ui_items import ItemsDialog  # noqa: F401
 
@@ -435,6 +437,21 @@ class ConfiguracionTab(QWidget):
         cl.setContentsMargins(16, 14, 16, 14)
         self.chk_estado = QCheckBox("Mostrar el estado de la cotización / factura en el PDF")
         cl.addWidget(self.chk_estado)
+        sub = QLabel("Coeficientes de venta por defecto de los análisis de precio unitario "
+                     "(cada cotización nueva parte de estos valores):")
+        sub.setObjectName("subtitulo")
+        sub.setWordWrap(True)
+        cl.addWidget(sub)
+        form = QFormLayout()
+        self.spins_coef = {}
+        for cat, nombre in calculo.CATEGORIAS.items():
+            sp = QDoubleSpinBox()
+            sp.setRange(0, 1000)
+            sp.setDecimals(2)
+            sp.setSuffix(" %")
+            self.spins_coef[cat] = sp
+            form.addRow(f"{nombre}:", sp)
+        cl.addLayout(form)
         fila = QHBoxLayout()
         fila.addStretch()
         btn_guardar = boton("Guardar configuración", "save", "primario")
@@ -465,12 +482,16 @@ class ConfiguracionTab(QWidget):
     def refrescar(self):
         conn = db.get_connection()
         self.chk_estado.setChecked(db.mostrar_estado_pdf(conn))
+        defecto = db.coef_apu_defecto(conn)
+        for cat, sp in self.spins_coef.items():
+            sp.setValue(defecto.coef(cat) * 100)
         self.plantilla_edit.setPlainText(db.obtener_plantilla_notas(conn))
         conn.close()
 
     def guardar_opciones(self):
         conn = db.get_connection()
         db.guardar_config("mostrar_estado_pdf", "1" if self.chk_estado.isChecked() else "0", conn)
+        db.guardar_coef_apu_defecto({c: sp.value() for c, sp in self.spins_coef.items()}, conn)
         conn.close()
         QMessageBox.information(self, "Configuración", "Configuración guardada.")
 
@@ -499,12 +520,14 @@ class MainWindow(QMainWindow):
 
         self.facturas_tab = FacturasTab()
         self.cotizaciones_tab = CotizacionesTab(on_factura_generada=self.facturas_tab.refrescar)
+        self.biblioteca_tab = BibliotecaTab()
         self.clientes_tab = ClientesTab()
         self.empresas_tab = EmpresasTab()
         self.configuracion_tab = ConfiguracionTab()
         secciones = [
             ("Cotizaciones", "file", self.cotizaciones_tab),
             ("Facturas", "receipt", self.facturas_tab),
+            ("Biblioteca", "book", self.biblioteca_tab),
             ("Clientes", "users", self.clientes_tab),
             ("Empresas", "building", self.empresas_tab),
             ("Configuración", "sliders", self.configuracion_tab),
@@ -548,7 +571,7 @@ class MainWindow(QMainWindow):
             self.pila.addWidget(widget)
         self.nav.currentRowChanged.connect(self._cambiar_seccion)
         lv.addWidget(self.nav, 1)
-        pie = QLabel("v1.1")
+        pie = QLabel("v1.2")
         pie.setObjectName("marcaSub")
         pie.setContentsMargins(20, 0, 0, 0)
         lv.addWidget(pie)

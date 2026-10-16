@@ -158,25 +158,26 @@ def _tabla_items(estilos, lineas, tasa):
     """Tabla de ítems con código jerárquico (01, 01.1…); los grupos van en negrita con su subtotal."""
     cods, imps = calculo.codigos(lineas), calculo.importes(lineas)
     hay_exentos = tasa > 0 and any(not l.es_grupo and not l.aplica_itbms for l in lineas)
-    filas = [["Ítem", "Descripción", "Cantidad", "Precio unitario", "Importe"]]
+    filas = [["Ítem", "Descripción", "Ud.", "Cantidad", "Precio unitario", "Importe"]]
     estilo_sub = ParagraphStyle("sub", parent=estilos["Normal"], leftIndent=8)
     grupos = []
     for i, l in enumerate(lineas):
         desc = _esc(l.descripcion).replace("\n", "<br/>")
         if l.es_grupo:
             grupos.append(len(filas))
-            filas.append([cods[i], Paragraph(f"<b>{desc}</b>", estilos["Normal"]), "", "", _dinero(imps[i])])
+            filas.append([cods[i], Paragraph(f"<b>{desc}</b>", estilos["Normal"]), "", "", "", _dinero(imps[i])])
             continue
         if hay_exentos and not l.aplica_itbms:
             desc += ' <font size="7" color="#666666">(exento de ITBMS)</font>'
         estilo = estilo_sub if l.nivel == 1 else estilos["Normal"]
-        filas.append([cods[i], Paragraph(desc, estilo), f"{l.cantidad:g}", _dinero(l.precio), _dinero(imps[i])])
-    tabla = Table(filas, colWidths=[1.5 * cm, 7.4 * cm, 1.8 * cm, 3.4 * cm, 3.4 * cm], repeatRows=1)
+        filas.append([cods[i], Paragraph(desc, estilo), l.unidad, f"{l.cantidad:g}", _dinero(l.precio), _dinero(imps[i])])
+    tabla = Table(filas, colWidths=[1.4 * cm, 6.5 * cm, 1.4 * cm, 1.8 * cm, 3.2 * cm, 3.2 * cm], repeatRows=1)
     estilo = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-        ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+        ("ALIGN", (3, 0), (-1, -1), "RIGHT"),
+        ("ALIGN", (2, 0), (2, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]
     for r in grupos:

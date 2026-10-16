@@ -22,13 +22,16 @@ Funcionalidad principal implementada (ver lista abajo). El formato visual de los
   - [x] Grupos y sub-ítems con numeración automática (`01`, `01.1`, `01.2`…): los grupos suman sus sub-ítems; se pueden mover arriba/abajo
   - [x] ITBMS por línea: casilla por ítem, por grupo (aplica a sus sub-ítems) o a todos; las líneas exentas se marcan en el PDF
   - [x] Costos adicionales (administración, utilidad, imprevistos…): % sobre el subtotal o monto fijo, con ITBMS opcional en cada uno
+  - [x] Tipo de ítem: **servicio profesional** (precio fijo, icono de maletín) o **mano de obra y material** (icono de herramienta), con unidad (m², uni…)
+  - [x] Análisis de precio unitario (APU) para «mano de obra y material»: insumos por categoría (materiales, mano de obra, medios auxiliares, subcontratos) con rendimiento, coeficiente y precio; filas «% de otra categoría» (p. ej. herramienta menor); coeficientes de venta por categoría e indirectos de obra, como en la hoja de cálculo de referencia
   - [x] Proyecto por cotización; descripciones multilínea y precios con formato `B/. 23,551.60`
   - [x] Búsqueda y filtros: por cliente o número y por estado, en Cotizaciones y Facturas
 - [x] **Facturas**: generar factura a partir de una cotización aprobada, numeración consecutiva, listado y seguimiento de pago (pendiente / pagada / vencida).
   - [x] Generar factura desde cotización aprobada (`FAC-AAAA-NNNN`, estado `pendiente`, una sola factura por cotización)
   - [x] Seguimiento de pago: marcar como pagada (con fecha de pago) o vencida; filas vencidas en rojo y pagadas en verde
+- [x] **Biblioteca de conceptos**: guarda servicios y APU para reutilizarlos; se insertan en cualquier cotización («Desde biblioteca») y se guardan desde ella («Guardar en biblioteca», también un grupo completo).
 - [x] **Empresas**: varias empresas, cada una con encabezado propio (nombre, subtítulo, RUC, dirección, teléfono, correo), logo y tasa de ITBMS (0 = exenta); se elige al crear la cotización y pasa a la factura.
-- [x] **Configuración**: mostrar estado en el PDF y plantilla de notas.
+- [x] **Configuración**: mostrar estado en el PDF, coeficientes de venta por defecto de los APU y plantilla de notas.
 - [x] **Interfaz**: navegación lateral, tema moderno, iconos vectoriales y logo (`assets/`).
 - [x] **Clientes**: catálogo básico de clientes (nombre, RUC/cédula, contacto).
 - [x] **Reportes**: exportar cotización o factura a PDF (botón "Exportar PDF" en ambas pestañas, con reportlab; el estado no se imprime salvo activar «Mostrar estado en el PDF» en Configuración; encabezado con empresa/subtítulo/correo configurables).
@@ -58,6 +61,8 @@ son vectoriales y están definidos en `app/iconos.py`.
 ## Datos de ejemplo
 
 `python scripts/ejemplo_curio.py` crea la cotización de ejemplo «Torres Curio A y B» (no se ejecuta sola ni toca cotizaciones existentes).
+
+`python scripts/ejemplo_valla.py` reproduce la hoja «VALLA MARIANO» con análisis de precio unitario (dos conceptos en la biblioteca y una cotización con sus indirectos): subtotal B/. 65,159.30, ITBMS B/. 4,561.15, total B/. 69,720.45.
 
 ## Compilar a ejecutable portable
 

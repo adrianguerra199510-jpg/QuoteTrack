@@ -34,7 +34,7 @@ def test_ventana_principal_con_tema_y_navegacion(conn, qapp):
     estilo.aplicar(qapp)
     w = ui_main.MainWindow()
     assert [w.nav.item(i).text() for i in range(w.nav.count())] == \
-        ["Cotizaciones", "Facturas", "Clientes", "Empresas", "Configuración"]
+        ["Cotizaciones", "Facturas", "Biblioteca", "Clientes", "Empresas", "Configuración"]
     for i in range(w.nav.count()):          # cada sección se puede abrir sin errores
         w.nav.setCurrentRow(i)
         assert w.pila.currentIndex() == i

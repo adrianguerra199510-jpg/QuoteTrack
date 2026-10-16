@@ -7,10 +7,12 @@ from PySide6.QtWidgets import (
 )
 
 from app import calculo, db, estilo, iconos
-from app.calculo import Cargo, Linea
+from app.calculo import Apu, Cargo, Linea
+from app.ui_apu import AjustesApuDialog, ApuDialog
+from app.ui_biblioteca import SelectorConceptosDialog, combo_modalidad
 from app.ui_comun import DescripcionDelegate, boton, parsear_numero, tabla_estandar
 
-COL_COD, COL_DESC, COL_CANT, COL_PRECIO, COL_IMPORTE, COL_ITBMS = range(6)
+COL_COD, COL_DESC, COL_TIPO, COL_UD, COL_CANT, COL_PRECIO, COL_IMPORTE, COL_ITBMS = range(8)
 CARGO_CONCEPTO, CARGO_TIPO, CARGO_VALOR, CARGO_MONTO, CARGO_ITBMS = range(5)
 FONDO_GRUPO = QBrush(QColor("#E8EEFC"))
 ROJO = QBrush(QColor(estilo.ROJO))
@@ -29,7 +31,7 @@ class ItemsDialog(QDialog):
         self._cargando = False
         self._invalidos = {}          # {("l"|"c", fila, columna): texto} con números mal escritos
         self.setWindowTitle(f"Cotización {numero}" + ("" if editable else " (solo lectura)"))
-        self.resize(1000, 800)
+        self.resize(1120, 820)
 
         conn = db.get_connection()
         self.lineas = db.obtener_lineas(cotizacion_id, conn)
@@ -39,6 +41,8 @@ class ItemsDialog(QDialog):
         empresas = db.listar_empresas(conn)
         empresa_actual = db.empresa_de_cotizacion(cotizacion_id, conn)
         self.tasa_guardada = db.tasa_de_cotizacion(cotizacion_id, conn)
+        self.cfg = db.obtener_config_apu(cotizacion_id, conn)      # coeficientes e indirectos del APU
+        self.coef_ind, self.costo_directo = 0.0, 0.0
         conn.close()
         if editable and not self.lineas:
             self.lineas.append(Linea())
@@ -97,7 +101,25 @@ class ItemsDialog(QDialog):
         barra.addWidget(self.btn_quitar)
         layout.addLayout(barra)
 
-        self.tabla = tabla_estandar(["Ítem", "Descripción", "Cantidad", "Precio unitario", "Importe", "ITBMS"])
+        barra2 = QHBoxLayout()
+        self.btn_biblioteca = boton("Desde biblioteca", "book", tooltip="Insertar conceptos guardados")
+        self.btn_guardar_biblioteca = boton("Guardar en biblioteca", "download",
+                                            tooltip="Guarda el ítem (o los sub-ítems del grupo) para reutilizarlos")
+        self.btn_apu = boton("Análisis de precio", "calculator",
+                             tooltip="Análisis de precio unitario del ítem «mano de obra y material» seleccionado")
+        self.btn_coef = boton("Coeficientes e indirectos", "sliders")
+        self.btn_biblioteca.clicked.connect(self.desde_biblioteca)
+        self.btn_guardar_biblioteca.clicked.connect(self.guardar_en_biblioteca)
+        self.btn_apu.clicked.connect(self.abrir_apu)
+        self.btn_coef.clicked.connect(self.ajustes_apu)
+        for b in (self.btn_biblioteca, self.btn_guardar_biblioteca):
+            barra2.addWidget(b)
+        barra2.addStretch()
+        for b in (self.btn_apu, self.btn_coef):
+            barra2.addWidget(b)
+        layout.addLayout(barra2)
+
+        self.tabla = tabla_estandar(["Ítem", "Descripción", "Tipo", "Ud.", "Cantidad", "Precio unitario", "Importe", "ITBMS"])
         self.tabla.setMinimumHeight(240)
         self.tabla.setWordWrap(True)
         self.tabla.setSelectionBehavior(QTableWidget.SelectRows)
@@ -107,10 +129,13 @@ class ItemsDialog(QDialog):
         h = self.tabla.horizontalHeader()
         h.setSectionResizeMode(COL_COD, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(COL_DESC, QHeaderView.Stretch)
-        for c, ancho in ((COL_CANT, 90), (COL_PRECIO, 130), (COL_IMPORTE, 130), (COL_ITBMS, 64)):
+        for c, ancho in ((COL_TIPO, 150), (COL_UD, 64), (COL_CANT, 90), (COL_PRECIO, 135), (COL_IMPORTE, 135), (COL_ITBMS, 66)):
             h.setSectionResizeMode(c, QHeaderView.Fixed)
             self.tabla.setColumnWidth(c, ancho)
         self.tabla.itemChanged.connect(self._al_editar_linea)
+        self.tabla.cellDoubleClicked.connect(self._doble_clic)
+        # el alto de cada fila depende del ancho de la descripción: se recalcula al cambiar el ancho
+        h.sectionResized.connect(lambda *_: self.tabla.resizeRowsToContents())
         layout.addWidget(self.tabla, 3)
 
         # --- costos adicionales
@@ -177,7 +202,8 @@ class ItemsDialog(QDialog):
 
         if not editable:
             for w in (self.btn_grupo, self.btn_item, self.btn_subitem, self.btn_subir, self.btn_bajar,
-                      self.btn_quitar, self.btn_itbms, self.btn_cargo, self.btn_quitar_cargo, self.btn_plantilla):
+                      self.btn_quitar, self.btn_itbms, self.btn_cargo, self.btn_quitar_cargo, self.btn_plantilla,
+                      self.btn_biblioteca):
                 w.setEnabled(False)
             self.notas_edit.setReadOnly(True)
             self.proyecto_edit.setReadOnly(True)
@@ -205,6 +231,15 @@ class ItemsDialog(QDialog):
         if render:
             self._refrescar_derivados()
 
+    @staticmethod
+    def _limpiar_widgets(tabla, columna):
+        """Oculta y retira los combos de una columna antes de volver a dibujarla (evita restos visibles)."""
+        for r in range(tabla.rowCount()):
+            w = tabla.cellWidget(r, columna)
+            if w is not None:
+                w.hide()
+                tabla.removeCellWidget(r, columna)
+
     def _fila_actual(self):
         f = self.tabla.currentRow()
         return f if 0 <= f < len(self.lineas) else -1
@@ -225,6 +260,7 @@ class ItemsDialog(QDialog):
     def _render_lineas(self, seleccionar=None):
         self._cargando = True
         self._invalidos = {k: v for k, v in self._invalidos.items() if k[0] != "l"}
+        self._limpiar_widgets(self.tabla, COL_TIPO)
         self.tabla.setRowCount(len(self.lineas))
         negrita = QFont()
         negrita.setBold(True)
@@ -234,6 +270,9 @@ class ItemsDialog(QDialog):
             desc = QTableWidgetItem(l.descripcion)
             desc.setIcon(iconos.icono("folder", estilo.AZUL, 18) if l.es_grupo else
                          iconos.icono("subitem", estilo.APAGADO, 18) if l.nivel == 1 else iconos.icono("file", estilo.APAGADO, 18))
+            tipo = QTableWidgetItem()
+            ud = QTableWidgetItem("" if l.es_grupo else l.unidad)
+            ud.setTextAlignment(Qt.AlignCenter)
             cant = QTableWidgetItem("" if l.es_grupo else f"{l.cantidad:g}")
             precio = QTableWidgetItem("" if l.es_grupo else f"{l.precio:,.2f}")
             importe = QTableWidgetItem()
@@ -244,17 +283,34 @@ class ItemsDialog(QDialog):
             base = Qt.ItemIsEnabled | Qt.ItemIsSelectable
             itbms.setFlags(base | (Qt.ItemIsUserCheckable if self.editable else Qt.NoItemFlags))
             itbms.setTextAlignment(Qt.AlignCenter)
+            tipo.setFlags(base)
+            if l.usa_apu:        # el precio sale del análisis de precio unitario
+                precio.setFlags(base)
+                precio.setForeground(QBrush(QColor(estilo.AZUL)))
+                precio.setToolTip("Calculado con el análisis de precio unitario (doble clic para abrirlo)")
             if l.es_grupo:
-                for it in (cant, precio):
+                for it in (ud, cant, precio):
                     it.setFlags(base)
-                for it in (cod, desc, cant, precio, importe, itbms):
+                for it in (cod, desc, tipo, ud, cant, precio, importe, itbms):
                     it.setBackground(FONDO_GRUPO)
                     it.setFont(negrita)
             if not self.editable:
-                for it in (desc, cant, precio):
+                for it in (desc, ud, cant, precio):
                     it.setFlags(base)
-            for c, it in enumerate((cod, desc, cant, precio, importe, itbms)):
+            for c, it in enumerate((cod, desc, tipo, ud, cant, precio, importe, itbms)):
                 self.tabla.setItem(i, c, it)
+            if not l.es_grupo:
+                combo = combo_modalidad(corto=True)
+                combo.setCurrentIndex(combo.findData(l.modalidad))
+                combo.setEnabled(self.editable)
+                combo.currentIndexChanged.connect(lambda _i, fila=i, cb=combo: self._cambio_modalidad(fila, cb))
+                envoltorio = QWidget()          # centra el combo en la fila sin estirarlo
+                envoltorio.setStyleSheet("background: transparent;")
+                lc = QHBoxLayout(envoltorio)
+                lc.setContentsMargins(6, 0, 6, 0)
+                lc.addWidget(combo, 0, Qt.AlignVCenter)
+                envoltorio.combo = combo
+                self.tabla.setCellWidget(i, COL_TIPO, envoltorio)
         self._cargando = False
         self._refrescar_derivados()
         self.tabla.resizeRowsToContents()
@@ -264,9 +320,12 @@ class ItemsDialog(QDialog):
     def _refrescar_derivados(self):
         """Actualiza código, importe y casillas de ITBMS (celdas calculadas) y los totales."""
         self._cargando = True
+        self.costo_directo, self.coef_ind = calculo.aplicar_apu(self.lineas, self.cfg)   # precios de los APU
         cods, imps = calculo.codigos(self.lineas), calculo.importes(self.lineas)
         for i, l in enumerate(self.lineas):
             self.tabla.item(i, COL_COD).setText(cods[i])
+            if l.usa_apu:
+                self.tabla.item(i, COL_PRECIO).setText(f"{l.precio:,.2f}")
             self.tabla.item(i, COL_IMPORTE).setText(_dinero(imps[i]))
             marca = self.tabla.item(i, COL_ITBMS)
             if l.es_grupo:
@@ -290,7 +349,7 @@ class ItemsDialog(QDialog):
         self._actualizar_totales()
 
     def _actualizar_totales(self):
-        t = calculo.calcular(self.lineas, self.cargos, self.tasa)
+        t = calculo.calcular(self.lineas, self.cargos, self.tasa, self.cfg)
         filas = [f"Subtotal ítems: <b>{_dinero(t.subtotal)}</b>"]
         for cargo, monto in t.cargos:
             etiqueta = f"{cargo.concepto or 'Costo'} ({cargo.valor:g}%)" if cargo.tipo == "porcentaje" else (cargo.concepto or "Costo")
@@ -314,6 +373,8 @@ class ItemsDialog(QDialog):
         if c == COL_DESC:
             l.descripcion = item.text().strip()
             self.tabla.resizeRowToContents(r)
+        elif c == COL_UD:
+            l.unidad = item.text().strip()
         elif c in (COL_CANT, COL_PRECIO):
             valor = parsear_numero(item.text())
             if valor is None:
@@ -408,10 +469,112 @@ class ItemsDialog(QDialog):
         self.lineas[:] = nuevo
         self._render_lineas(pos)
 
+    # ------------------------------------------------------------------ modalidad, APU y biblioteca
+    def _cambio_modalidad(self, fila, combo):
+        if not (0 <= fila < len(self.lineas)) or not self.editable:
+            return
+        l = self.lineas[fila]
+        nueva = combo.currentData()
+        if nueva == l.modalidad:
+            return
+        if nueva == calculo.OBRA:
+            l.modalidad, l.apu = calculo.OBRA, Apu()
+        else:
+            if l.apu and l.apu.insumos:
+                r = QMessageBox.question(
+                    self, "Servicio profesional",
+                    "Al pasar a servicio profesional se descarta el análisis de precio unitario; "
+                    "el precio actual queda como precio fijo. ¿Continuar?")
+                if r != QMessageBox.Yes:
+                    combo.blockSignals(True)
+                    combo.setCurrentIndex(combo.findData(l.modalidad))
+                    combo.blockSignals(False)
+                    return
+            l.modalidad, l.apu = calculo.SERVICIO, None
+        self._render_lineas(fila)
+
+    def _doble_clic(self, fila, col):
+        if col == COL_PRECIO and 0 <= fila < len(self.lineas) and self.lineas[fila].usa_apu:
+            self.abrir_apu()
+
+    def abrir_apu(self):
+        i = self._fila_actual()
+        if i < 0 or self.lineas[i].es_grupo:
+            QMessageBox.information(self, "Análisis de precio", "Selecciona un ítem de «mano de obra y material».")
+            return
+        l = self.lineas[i]
+        if not l.usa_apu:
+            QMessageBox.information(
+                self, "Análisis de precio",
+                "Este ítem es un servicio profesional (precio fijo). Cambia su tipo a «Mano de obra y material» "
+                "para analizar su precio unitario.")
+            return
+        dlg = ApuDialog(l.descripcion, l.unidad, l.apu or Apu(), self.cfg, self.coef_ind, self.editable, self)
+        if dlg.exec() and self.editable:
+            l.apu = dlg.apu
+            self._render_lineas(i)
+
+    def ajustes_apu(self):
+        dlg = AjustesApuDialog(self.cfg, self.costo_directo, self.editable, self)
+        if dlg.exec() and self.editable:
+            self.cfg = dlg.cfg
+            self._refrescar_derivados()
+
+    def desde_biblioteca(self):
+        """Inserta conceptos de la biblioteca: en el grupo seleccionado (como sub-ítems) o al final."""
+        dlg = SelectorConceptosDialog(self)
+        if not dlg.exec():
+            return
+        conceptos = dlg.seleccion()
+        if not conceptos:
+            return
+        i = self._fila_actual()
+        g = self._padre(i) if i >= 0 else -1
+        en_grupo = g >= 0 and self.lineas[g].es_grupo
+        pos = g + 1 + self._hijos(g) if en_grupo else len(self.lineas)
+        nuevas = [db.linea_desde_concepto(c, 1.0, 1 if en_grupo else 0) for c in conceptos]
+        self.lineas[pos:pos] = nuevas
+        self._render_lineas(pos)
+
+    def guardar_en_biblioteca(self):
+        """Guarda el ítem seleccionado (o los sub-ítems del grupo) como conceptos reutilizables."""
+        i = self._fila_actual()
+        if i < 0:
+            QMessageBox.information(self, "Biblioteca", "Selecciona un ítem (o un grupo) para guardarlo.")
+            return
+        if self.lineas[i].es_grupo:
+            candidatos = [(l, self.lineas[i].descripcion) for l in self.lineas[i + 1:i + 1 + self._hijos(i)]]
+        else:
+            g = self._padre(i)
+            candidatos = [(self.lineas[i], self.lineas[g].descripcion if self.lineas[i].nivel == 1 and g >= 0 else "")]
+        candidatos = [(l, cat) for l, cat in candidatos if l.descripcion.strip()]
+        if not candidatos:
+            QMessageBox.information(self, "Biblioteca", "Escribe primero la descripción del ítem.")
+            return
+        conn = db.get_connection()
+        guardados = 0
+        for l, cat in candidatos:
+            concepto = db.concepto_desde_linea(l, cat)
+            existente = db.buscar_concepto(concepto.descripcion, concepto.unidad, conn)
+            if existente:
+                r = QMessageBox.question(
+                    self, "Biblioteca",
+                    f"Ya existe «{concepto.descripcion}» en la biblioteca. ¿Actualizarlo con los datos de este ítem?")
+                if r != QMessageBox.Yes:
+                    continue
+                concepto.id = existente.id
+                concepto.categoria = concepto.categoria or existente.categoria
+            db.guardar_concepto(concepto, conn)
+            guardados += 1
+        conn.close()
+        if guardados:
+            QMessageBox.information(self, "Biblioteca", f"Se guardó {guardados} concepto(s) en la biblioteca.")
+
     # ------------------------------------------------------------------ costos adicionales
     def _render_cargos(self):
         self._cargando = True
         self._invalidos = {k: v for k, v in self._invalidos.items() if k[0] != "c"}
+        self._limpiar_widgets(self.tabla_cargos, CARGO_TIPO)
         self.tabla_cargos.setRowCount(len(self.cargos))
         for i, c in enumerate(self.cargos):
             concepto = QTableWidgetItem(c.concepto)
@@ -548,7 +711,7 @@ class ItemsDialog(QDialog):
         conn = db.get_connection()
         if self.empresa_combo.currentData() is not None:
             db.cambiar_empresa_cotizacion(self.cotizacion_id, self.empresa_combo.currentData(), conn)
-        db.guardar_cotizacion(self.cotizacion_id, lineas, cargos, conn, tasa=self.tasa)
+        db.guardar_cotizacion(self.cotizacion_id, lineas, cargos, conn, tasa=self.tasa, cfg=self.cfg)
         db.guardar_notas(self.cotizacion_id, self.notas_edit.toPlainText().strip("\n"), conn)
         db.guardar_proyecto(self.cotizacion_id, self.proyecto_edit.text().strip(), conn)
         conn.close()
