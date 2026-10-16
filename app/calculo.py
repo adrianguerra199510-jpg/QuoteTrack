@@ -128,6 +128,8 @@ class Concepto:
     precio: float = 0.0
     categoria: str = ""
     apu: Apu | None = None
+    codigo: str = ""       # identificador dentro de su fuente (p. ej. la página de la base de la Contraloría)
+    fuente: str = ""       # vacío = creado por el usuario
 
 
 @dataclass

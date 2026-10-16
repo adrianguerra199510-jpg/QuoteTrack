@@ -184,6 +184,9 @@ def init_db() -> None:
     _agregar_columna(conn, "cotizacion_items", "apu_base", "REAL NOT NULL DEFAULT 1")
     for cat in calculo.CATEGORIAS:
         _agregar_columna(conn, "cotizaciones", f"apu_coef_{cat}", "REAL")   # en %, NULL = valor por defecto
+    # Migración: origen de los conceptos de la biblioteca (bases de datos de costos importadas)
+    _agregar_columna(conn, "conceptos", "codigo", "TEXT NOT NULL DEFAULT ''")
+    _agregar_columna(conn, "conceptos", "fuente", "TEXT NOT NULL DEFAULT ''")
     _migrar_empresa_inicial(conn)
     conn.commit()
     conn.close()
@@ -559,7 +562,7 @@ def _concepto(fila, conn) -> Concepto:
         apu = Apu(fila["apu_base"], _insumos_de(conn.execute(
             "SELECT * FROM concepto_insumos WHERE concepto_id = ? ORDER BY id", (fila["id"],)).fetchall()))
     return Concepto(fila["id"], fila["descripcion"], fila["unidad"], fila["modalidad"], fila["precio"],
-                    fila["categoria"], apu)
+                    fila["categoria"], apu, fila["codigo"], fila["fuente"])
 
 
 def guardar_concepto(c: Concepto, conn: sqlite3.Connection) -> int:
@@ -573,14 +576,14 @@ def guardar_concepto(c: Concepto, conn: sqlite3.Connection) -> int:
     if base <= 0:
         raise ValueError("La cantidad base del análisis debe ser mayor que cero.")
     valores = (descripcion, (c.unidad or "").strip(), c.modalidad, 0.0 if c.modalidad == calculo.OBRA else c.precio,
-               (c.categoria or "").strip(), base)
+               (c.categoria or "").strip(), base, c.codigo or "", c.fuente or "")
     if c.id is None:
-        cid = conn.execute("INSERT INTO conceptos (descripcion, unidad, modalidad, precio, categoria, apu_base) "
-                           "VALUES (?, ?, ?, ?, ?, ?)", valores).lastrowid
+        cid = conn.execute("INSERT INTO conceptos (descripcion, unidad, modalidad, precio, categoria, apu_base, codigo, "
+                           "fuente) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", valores).lastrowid
     else:
         cid = c.id
         conn.execute("UPDATE conceptos SET descripcion = ?, unidad = ?, modalidad = ?, precio = ?, categoria = ?, "
-                     "apu_base = ? WHERE id = ?", (*valores, cid))
+                     "apu_base = ?, codigo = ?, fuente = ? WHERE id = ?", (*valores, cid))
     _guardar_insumos(conn, "concepto_insumos", "concepto_id", cid,
                      c.apu.insumos if c.apu and c.modalidad == calculo.OBRA else [])
     conn.commit()
@@ -592,17 +595,70 @@ def obtener_concepto(concepto_id: int, conn: sqlite3.Connection) -> Concepto | N
     return _concepto(fila, conn) if fila else None
 
 
-def listar_conceptos(conn: sqlite3.Connection, texto: str = "", modalidad: str | None = None) -> list[Concepto]:
+ORDEN_CONCEPTOS = "ORDER BY (c.fuente <> ''), CAST(c.codigo AS INTEGER), c.categoria, c.descripcion"
+
+
+def listar_conceptos(conn: sqlite3.Connection, texto: str = "", modalidad: str | None = None,
+                     disciplina: str | None = None) -> list[Concepto]:
+    """Conceptos de la biblioteca: primero los propios (por categoría), luego los importados en el orden de su fuente.
+    `disciplina` filtra por el primer nivel de la categoría («ALBAÑILERÍA › CONCRETOS» -> «ALBAÑILERÍA»)."""
     condiciones, params = [], []
     if texto.strip():
-        condiciones.append("(descripcion LIKE ? OR categoria LIKE ?)")
+        condiciones.append("(c.descripcion LIKE ? OR c.categoria LIKE ?)")
         params += [f"%{texto.strip()}%"] * 2
     if modalidad:
-        condiciones.append("modalidad = ?")
+        condiciones.append("c.modalidad = ?")
         params.append(modalidad)
+    if disciplina:
+        condiciones.append("(c.categoria = ? OR c.categoria LIKE ?)")
+        params += [disciplina, f"{disciplina} › %"]
     where = "WHERE " + " AND ".join(condiciones) if condiciones else ""
-    return [_concepto(f, conn) for f in conn.execute(
-        f"SELECT * FROM conceptos {where} ORDER BY categoria, descripcion", params).fetchall()]
+    filas = conn.execute(f"SELECT c.* FROM conceptos c {where} {ORDEN_CONCEPTOS}", params).fetchall()
+    insumos = {}
+    for f in conn.execute(f"SELECT ci.* FROM concepto_insumos ci JOIN conceptos c ON c.id = ci.concepto_id {where} "
+                          "ORDER BY ci.id", params):
+        insumos.setdefault(f["concepto_id"], []).append(f)
+    resultado = []
+    for f in filas:
+        apu = None
+        if f["modalidad"] == calculo.OBRA:
+            apu = Apu(f["apu_base"], _insumos_de(insumos.get(f["id"], [])))
+        resultado.append(Concepto(f["id"], f["descripcion"], f["unidad"], f["modalidad"], f["precio"], f["categoria"],
+                                  apu, f["codigo"], f["fuente"]))
+    return resultado
+
+
+def disciplinas_conceptos(conn: sqlite3.Connection) -> list[str]:
+    """Primer nivel de las categorías de la biblioteca, sin repetir (para el filtro)."""
+    cats = {(f["categoria"] or "").split(" › ")[0] for f in conn.execute("SELECT DISTINCT categoria FROM conceptos")}
+    return sorted(c for c in cats if c)
+
+
+def importar_conceptos(conceptos: list[dict], fuente: str, conn: sqlite3.Connection) -> tuple[int, int]:
+    """Importa (o actualiza, por `fuente` + `codigo`) conceptos con análisis; devuelve (nuevos, actualizados).
+    Cada concepto es un dict: codigo, descripcion, unidad, categoria, insumos=[[cat, desc, ud, cantidad, coef, precio, ref]]."""
+    existentes = {f["codigo"]: f["id"] for f in conn.execute(
+        "SELECT id, codigo FROM conceptos WHERE fuente = ?", (fuente,))}
+    nuevos = actualizados = 0
+    for c in conceptos:
+        valores = (c["descripcion"].strip(), c.get("unidad", ""), calculo.OBRA, 0.0, c.get("categoria", ""), 1.0,
+                   str(c["codigo"]), fuente)
+        cid = existentes.get(str(c["codigo"]))
+        if cid is None:
+            cid = conn.execute("INSERT INTO conceptos (descripcion, unidad, modalidad, precio, categoria, apu_base, "
+                               "codigo, fuente) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", valores).lastrowid
+            nuevos += 1
+        else:
+            conn.execute("UPDATE conceptos SET descripcion = ?, unidad = ?, modalidad = ?, precio = ?, categoria = ?, "
+                         "apu_base = ?, codigo = ?, fuente = ? WHERE id = ?", (*valores, cid))
+            actualizados += 1
+        conn.execute("DELETE FROM concepto_insumos WHERE concepto_id = ?", (cid,))
+        conn.executemany(
+            "INSERT INTO concepto_insumos (concepto_id, categoria, descripcion, unidad, rendimiento, coeficiente, "
+            "precio, ref_categoria) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [(cid, *i) for i in c["insumos"]])
+    conn.commit()
+    return nuevos, actualizados
 
 
 def eliminar_concepto(concepto_id: int, conn: sqlite3.Connection) -> None:
@@ -625,11 +681,16 @@ def buscar_concepto(descripcion: str, unidad: str, conn: sqlite3.Connection) -> 
     return _concepto(fila, conn) if fila else None
 
 
-def precio_referencial(c: Concepto, conn: sqlite3.Connection) -> float:
+def precio_referencial(c: Concepto, conn: sqlite3.Connection, cfg: ConfigApu | None = None) -> float:
     """Servicio: su precio. Mano de obra y material: precio de venta con los coeficientes por defecto."""
     if c.modalidad == calculo.OBRA and c.apu:
-        return calculo.precio_unitario(c.apu, coef_apu_defecto(conn))
+        return calculo.precio_unitario(c.apu, cfg or coef_apu_defecto(conn))
     return c.precio
+
+
+def costo_directo(c: Concepto) -> float:
+    """Costo unitario sin coeficientes (en un servicio, su precio)."""
+    return round(calculo.costo_unitario(c.apu), 2) if c.modalidad == calculo.OBRA and c.apu else c.precio
 
 
 def concepto_desde_linea(l: Linea, categoria: str = "") -> Concepto:

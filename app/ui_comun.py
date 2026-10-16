@@ -66,6 +66,14 @@ def tabla_estandar(columnas, estirar=None) -> QTableWidget:
     return t
 
 
+def anchos_fijos(tabla: QTableWidget, anchos: dict) -> None:
+    """Columnas de ancho fijo (rápido con miles de filas; `ResizeToContents` se vuelve lentísimo)."""
+    cab = tabla.horizontalHeader()
+    for col, ancho in anchos.items():
+        cab.setSectionResizeMode(col, QHeaderView.Fixed)
+        tabla.setColumnWidth(col, ancho)
+
+
 def celda_estado(texto: str) -> QTableWidgetItem:
     """Celda con el color del estado (borrador, aprobada, vencida…)."""
     from PySide6.QtGui import QBrush, QColor, QFont

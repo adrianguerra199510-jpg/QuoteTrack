@@ -1,14 +1,15 @@
 """Biblioteca de conceptos reutilizables: servicios con precio fijo o ítems con análisis de precio unitario."""
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QStackedWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from app import calculo, db, estilo, iconos
+from app import base_cgr, calculo, db, estilo, iconos
 from app.calculo import Apu, Concepto
 from app.ui_apu import ApuEditor
-from app.ui_comun import boton, encabezado_pagina, pagina, tabla_estandar
+from app.ui_comun import anchos_fijos, boton, encabezado_pagina, pagina, tabla_estandar
 
 ICONO_MODALIDAD = {calculo.SERVICIO: "briefcase", calculo.OBRA: "tool"}
 
@@ -138,6 +139,7 @@ class SelectorConceptosDialog(QDialog):
         fila.addWidget(self.busqueda, 1)
         lay.addLayout(fila)
         self.tabla = tabla_estandar(["Categoría", "Descripción", "Ud.", "Tipo", "Precio"], estirar=1)
+        anchos_fijos(self.tabla, {0: 230, 2: 60, 3: 170, 4: 110})
         self.tabla.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tabla.doubleClicked.connect(lambda *_: self.accept())
         lay.addWidget(self.tabla, 1)
@@ -160,7 +162,8 @@ class SelectorConceptosDialog(QDialog):
     def _cargar(self):
         conn = db.get_connection()
         self._conceptos = db.listar_conceptos(conn, self.busqueda.text())
-        precios = [db.precio_referencial(c, conn) for c in self._conceptos]
+        cfg = db.coef_apu_defecto(conn)
+        precios = [db.precio_referencial(c, conn, cfg) for c in self._conceptos]
         total = conn.execute("SELECT COUNT(*) AS n FROM conceptos").fetchone()["n"]
         conn.close()
         self.vacio.setVisible(total == 0)
@@ -189,9 +192,12 @@ class BibliotecaTab(QWidget):
         self.btn_editar = boton("Editar", "edit")
         self.btn_duplicar = boton("Duplicar", "copy")
         self.btn_eliminar = boton("Eliminar", "trash", "peligro")
+        self.btn_importar = boton("Importar base de la Contraloría", "upload",
+                                  tooltip="Carga las 1,169 actividades de la base de costos directos de Panamá")
         for b in (self.btn_nuevo, self.btn_editar, self.btn_duplicar):
             barra.addWidget(b)
         barra.addStretch()
+        barra.addWidget(self.btn_importar)
         barra.addWidget(self.btn_eliminar)
         lay.addLayout(barra)
 
@@ -200,24 +206,34 @@ class BibliotecaTab(QWidget):
         self.busqueda.setPlaceholderText("Buscar por descripción o categoría…")
         self.busqueda.setClearButtonEnabled(True)
         self.busqueda.addAction(iconos.icono("search", estilo.APAGADO, 16), QLineEdit.LeadingPosition)
+        self.disciplina = QComboBox()
+        self.disciplina.setMinimumWidth(220)
         self.tipo = QComboBox()
         self.tipo.addItem("Todos los tipos", None)
         for clave, nombre in calculo.MODALIDADES.items():
             self.tipo.addItem(nombre, clave)
         filtros.addWidget(self.busqueda, 1)
+        filtros.addWidget(self.disciplina)
         filtros.addWidget(self.tipo)
         lay.addLayout(filtros)
 
-        self.tabla = tabla_estandar(["Categoría", "Descripción", "Ud.", "Tipo", "Precio referencial"], estirar=1)
+        self.tabla = tabla_estandar(["Categoría", "Descripción", "Ud.", "Tipo", "Costo directo", "Precio ref."], estirar=1)
+        anchos_fijos(self.tabla, {0: 270, 2: 60, 3: 185, 4: 120, 5: 120})
+        self.tabla.verticalHeader().setDefaultSectionSize(34)
         lay.addWidget(self.tabla, 1)
-        nota = QLabel("El precio de un concepto «mano de obra y material» es referencial: se calcula con los coeficientes "
-                      "por defecto; en cada cotización se recalcula con los suyos.")
+        self.lbl_total = QLabel()
+        self.lbl_total.setObjectName("subtitulo")
+        lay.addWidget(self.lbl_total)
+        nota = QLabel("Costo directo: suma de los insumos sin coeficientes. Precio ref.: con los coeficientes por defecto "
+                      "(Configuración); en cada cotización se recalcula con los suyos.")
         nota.setObjectName("subtitulo")
         nota.setWordWrap(True)
         lay.addWidget(nota)
 
         self.busqueda.textChanged.connect(lambda *_: self.refrescar())
         self.tipo.currentIndexChanged.connect(lambda *_: self.refrescar())
+        self.disciplina.currentIndexChanged.connect(lambda *_: self.refrescar())
+        self.btn_importar.clicked.connect(self.importar_base)
         self.tabla.cellDoubleClicked.connect(lambda *_: self.editar())
         self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
         self.btn_nuevo.clicked.connect(self.nuevo)
@@ -236,24 +252,69 @@ class BibliotecaTab(QWidget):
         for b in (self.btn_editar, self.btn_duplicar, self.btn_eliminar):
             b.setEnabled(hay)
 
+    def _cargar_disciplinas(self, conn):
+        """Llena el filtro de disciplinas (conserva la elegida si sigue existiendo)."""
+        actual = self.disciplina.currentData()
+        self.disciplina.blockSignals(True)
+        self.disciplina.clear()
+        self.disciplina.addItem("Todas las categorías", None)
+        for d in db.disciplinas_conceptos(conn):
+            self.disciplina.addItem(d, d)
+        idx = self.disciplina.findData(actual)
+        self.disciplina.setCurrentIndex(max(idx, 0))
+        self.disciplina.blockSignals(False)
+
     def refrescar(self):
         conn = db.get_connection()
-        conceptos = db.listar_conceptos(conn, self.busqueda.text(), self.tipo.currentData())
-        precios = [db.precio_referencial(c, conn) for c in conceptos]
+        self._cargar_disciplinas(conn)
+        conceptos = db.listar_conceptos(conn, self.busqueda.text(), self.tipo.currentData(), self.disciplina.currentData())
+        cfg = db.coef_apu_defecto(conn)
+        precios = [db.precio_referencial(c, conn, cfg) for c in conceptos]
+        total = conn.execute("SELECT COUNT(*) AS n FROM conceptos").fetchone()["n"]
         conn.close()
         sel = self._id_seleccionado()
+        self.tabla.setUpdatesEnabled(False)
         self.tabla.setRowCount(len(conceptos))
         for r, (c, p) in enumerate(zip(conceptos, precios)):
             desc = QTableWidgetItem(c.descripcion)
             desc.setData(Qt.UserRole, c.id)
+            desc.setToolTip(c.descripcion)
+            costo = QTableWidgetItem(f"B/. {db.costo_directo(c):,.2f}")
+            costo.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             precio = QTableWidgetItem(f"B/. {p:,.2f}")
             precio.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             for col, it in enumerate((QTableWidgetItem(c.categoria), desc, QTableWidgetItem(c.unidad),
-                                      celda_tipo(c.modalidad), precio)):
+                                      celda_tipo(c.modalidad), costo, precio)):
                 self.tabla.setItem(r, col, it)
             if c.id == sel:
                 self.tabla.setCurrentCell(r, 1)
+        self.tabla.setUpdatesEnabled(True)
+        self.lbl_total.setText(f"{len(conceptos):,} de {total:,} conceptos" if total else
+                               "La biblioteca está vacía. Crea un concepto, guarda ítems desde una cotización o importa la "
+                               "base de la Contraloría.")
         self._actualizar_acciones()
+
+    def importar_base(self):
+        """Carga la base de datos de costo directo de la Contraloría (idempotente: actualiza lo ya importado)."""
+        datos = base_cgr.cargar()
+        n = len(datos["conceptos"])
+        r = QMessageBox.question(
+            self, "Importar base de la Contraloría",
+            f"Se cargarán {n:,} actividades de construcción con su análisis de costos unitarios:\n\n{datos['fuente']}\n\n"
+            "Si ya las importaste antes, se actualizan con los datos originales (se pierden tus cambios a esos conceptos). "
+            "Tus conceptos propios no se tocan. ¿Continuar?")
+        if r != QMessageBox.Yes:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            conn = db.get_connection()
+            nuevos, actualizados = db.importar_conceptos(datos["conceptos"], datos["fuente"], conn)
+            conn.close()
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.refrescar()
+        QMessageBox.information(self, "Importar base de la Contraloría",
+                                f"Listo: {nuevos:,} actividades nuevas y {actualizados:,} actualizadas.")
 
     def _guardar(self, dlg):
         conn = db.get_connection()

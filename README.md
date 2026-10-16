@@ -30,10 +30,11 @@ Funcionalidad principal implementada (ver lista abajo). El formato visual de los
   - [x] Generar factura desde cotización aprobada (`FAC-AAAA-NNNN`, estado `pendiente`, una sola factura por cotización)
   - [x] Seguimiento de pago: marcar como pagada (con fecha de pago) o vencida; filas vencidas en rojo y pagadas en verde
 - [x] **Biblioteca de conceptos**: guarda servicios y APU para reutilizarlos; se insertan en cualquier cotización («Desde biblioteca») y se guardan desde ella («Guardar en biblioteca», también un grupo completo).
+- [x] **Base de costos de la Contraloría (Panamá)**: 1,169 actividades de construcción con su análisis de costos unitarios (salarios jul 2025 – jun 2026), listas para importar a la biblioteca con «Importar base de la Contraloría». Filtro por categoría, costo directo y precio de referencia. 1,157 traen el análisis completo (mano de obra, materiales, herramienta, equipo, auxiliares y matrices); 12 páginas del PDF venían desordenadas y se importan con el costo directo publicado en una sola fila. Los datos están en `assets/base_costos_cgr.json.gz` y se regeneran con `scripts/generar_base_cgr.py`.
 - [x] **Empresas**: varias empresas, cada una con encabezado propio (nombre, subtítulo, RUC, dirección, teléfono, correo), logo y tasa de ITBMS (0 = exenta); se elige al crear la cotización y pasa a la factura.
 - [x] **Configuración**: mostrar estado en el PDF, coeficientes de venta por defecto de los APU y plantilla de notas.
 - [x] **Interfaz**: navegación lateral, tema moderno, iconos vectoriales y logo (`assets/`).
-- [x] **Clientes**: catálogo básico de clientes (nombre, RUC/cédula, contacto).
+- [x] **Clientes**: catálogo de clientes (nombre, RUC/cédula, contacto) con edición y eliminación (no se elimina uno con cotizaciones o facturas).
 - [x] **Reportes**: exportar cotización o factura a PDF o a Word (.docx editable, con el mismo contenido: encabezado con logo, grupos, totales y notas con viñetas) (botón "Exportar PDF" en ambas pestañas, con reportlab; el estado no se imprime salvo activar «Mostrar estado en el PDF» en Configuración; encabezado con empresa/subtítulo/correo configurables).
 
 ## Instalación (desarrollo)
