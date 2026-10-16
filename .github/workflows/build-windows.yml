@@ -1,0 +1,39 @@
+name: Build Windows (.exe portable)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/new-session-smaoex]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt pyinstaller
+      - name: Pruebas
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
+      - name: Compilar con PyInstaller
+        run: pyinstaller --noconfirm --clean --windowed --name QuoteTrack --icon assets\icon.ico --add-data "assets;assets" --collect-data docx main.py
+      - name: Comprobar que el ejecutable abre
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\QuoteTrack\QuoteTrack.exe" -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) { throw "QuoteTrack.exe se cerró al iniciar (código $($p.ExitCode))" }
+          Stop-Process -Id $p.Id -Force
+      - name: Comprimir
+        shell: pwsh
+        run: Compress-Archive -Path dist\QuoteTrack -DestinationPath QuoteTrack_portable.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuoteTrack_portable
+          path: QuoteTrack_portable.zip
