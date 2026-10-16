@@ -86,17 +86,26 @@ def celda_dinero(valor: float) -> QTableWidgetItem:
     return it
 
 
-def exportar_pdf(parent, funcion, registro_id, numero, **opciones):
-    """Pide la ruta de destino y exporta con `funcion` (pdf.exportar_*)."""
-    ruta, _ = QFileDialog.getSaveFileName(parent, "Exportar PDF", f"{numero}.pdf", "PDF (*.pdf)")
+def exportar_archivo(parent, funcion, registro_id, numero, extension, filtro, titulo, **opciones):
+    """Pide la ruta de destino y exporta con `funcion` (pdf.exportar_* / word.exportar_*)."""
+    ruta, _ = QFileDialog.getSaveFileName(parent, titulo, f"{numero}.{extension}", filtro)
     if not ruta:
         return
     try:
         funcion(registro_id, ruta, **opciones)
     except (ValueError, OSError) as e:
-        QMessageBox.warning(parent, "Exportar PDF", f"No se pudo exportar el PDF:\n{e}")
+        QMessageBox.warning(parent, titulo, f"No se pudo exportar el archivo:\n{e}")
         return
-    QMessageBox.information(parent, "Exportar PDF", f"PDF guardado en:\n{ruta}")
+    QMessageBox.information(parent, titulo, f"Archivo guardado en:\n{ruta}")
+
+
+def exportar_pdf(parent, funcion, registro_id, numero, **opciones):
+    exportar_archivo(parent, funcion, registro_id, numero, "pdf", "PDF (*.pdf)", "Exportar PDF", **opciones)
+
+
+def exportar_word(parent, funcion, registro_id, numero, **opciones):
+    exportar_archivo(parent, funcion, registro_id, numero, "docx", "Documento de Word (*.docx)", "Exportar Word",
+                     **opciones)
 
 
 class FiltroBar(QHBoxLayout):

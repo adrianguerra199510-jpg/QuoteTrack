@@ -21,7 +21,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-pyinstaller --noconfirm --clean --windowed --name QuoteTrack --icon assets\icon.ico --add-data "assets;assets" main.py
+pyinstaller --noconfirm --clean --windowed --name QuoteTrack --icon assets\icon.ico --add-data "assets;assets" --collect-data docx main.py
 
 echo.
 echo Listo. Ejecutable en dist\QuoteTrack\QuoteTrack.exe

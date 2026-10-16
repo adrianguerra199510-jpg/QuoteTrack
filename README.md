@@ -34,7 +34,7 @@ Funcionalidad principal implementada (ver lista abajo). El formato visual de los
 - [x] **Configuración**: mostrar estado en el PDF, coeficientes de venta por defecto de los APU y plantilla de notas.
 - [x] **Interfaz**: navegación lateral, tema moderno, iconos vectoriales y logo (`assets/`).
 - [x] **Clientes**: catálogo básico de clientes (nombre, RUC/cédula, contacto).
-- [x] **Reportes**: exportar cotización o factura a PDF (botón "Exportar PDF" en ambas pestañas, con reportlab; el estado no se imprime salvo activar «Mostrar estado en el PDF» en Configuración; encabezado con empresa/subtítulo/correo configurables).
+- [x] **Reportes**: exportar cotización o factura a PDF o a Word (.docx editable, con el mismo contenido: encabezado con logo, grupos, totales y notas con viñetas) (botón "Exportar PDF" en ambas pestañas, con reportlab; el estado no se imprime salvo activar «Mostrar estado en el PDF» en Configuración; encabezado con empresa/subtítulo/correo configurables).
 
 ## Instalación (desarrollo)
 

@@ -9,7 +9,7 @@ from reportlab.lib.units import cm
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import Image, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
-from app import calculo, db
+from app import calculo, db, documento
 
 
 def _dinero(valor: float) -> str:
@@ -136,15 +136,7 @@ def _bloque_empresa(estilos, empresa):
 
 def _tabla_totales(t):
     """Subtotal, costos adicionales, ITBMS y total a partir de un `calculo.Totales`."""
-    filas = [["Subtotal:", _dinero(t.subtotal)]]
-    for cargo, monto in t.cargos:
-        etiqueta = f"{cargo.concepto} ({cargo.valor:g}%):" if cargo.tipo == "porcentaje" else f"{cargo.concepto}:"
-        filas.append([etiqueta, _dinero(monto)])
-    if t.itbms == 0:
-        etiqueta_itbms = "ITBMS (exento):"
-    else:
-        etiqueta_itbms = f"ITBMS ({t.tasa:.0%}):" if t.tasa else "ITBMS:"
-    filas += [[etiqueta_itbms, _dinero(t.itbms)], ["Total:", _dinero(t.total)]]
+    filas = [[etiqueta, _dinero(monto)] for etiqueta, monto, _total in documento.etiquetas_totales(t)]
     tabla = Table(filas, colWidths=[7 * cm, 3.8 * cm], hAlign="RIGHT")
     tabla.setStyle(TableStyle([
         ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
@@ -186,70 +178,23 @@ def _tabla_items(estilos, lineas, tasa):
     return tabla
 
 
+def _construir(doc_datos: documento.Documento, ruta: str) -> None:
+    estilos = _estilos()
+    pdf = SimpleDocTemplate(ruta, pagesize=letter, title=f"{doc_datos.titulo.title()} {doc_datos.numero}",
+                            leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm, bottomMargin=2 * cm)
+    elementos = _bloque_empresa(estilos, doc_datos.empresa) + _encabezado(
+        estilos, doc_datos.titulo, doc_datos.numero, doc_datos.fecha, doc_datos.cliente, extra=doc_datos.extra)
+    if doc_datos.lineas is not None:
+        elementos += [_tabla_items(estilos, doc_datos.lineas, doc_datos.totales.tasa), Spacer(1, 0.5 * cm)]
+    elementos.append(_tabla_totales(doc_datos.totales))
+    elementos += _bloque_notas(estilos, doc_datos.notas)
+    pdf.build(elementos)
+
+
 def exportar_cotizacion(cotizacion_id: int, ruta: str, mostrar_estado: bool | None = None) -> None:
     """`mostrar_estado=None` usa la opción de Configuración (desactivada por defecto)."""
-    conn = db.get_connection()
-    try:
-        cot = conn.execute("SELECT * FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()
-        if cot is None:
-            raise ValueError("La cotización no existe.")
-        cliente = conn.execute("SELECT * FROM clientes WHERE id = ?", (cot["cliente_id"],)).fetchone()
-        lineas = db.obtener_lineas(cotizacion_id, conn)
-        totales = db.totales_cotizacion(cotizacion_id, conn)
-        if mostrar_estado is None:
-            mostrar_estado = db.mostrar_estado_pdf(conn)
-        empresa = db.empresa_de_cotizacion(cotizacion_id, conn)
-    finally:
-        conn.close()
-
-    estilos = _estilos()
-    doc = SimpleDocTemplate(ruta, pagesize=letter, title=f"Cotización {cot['numero']}",
-                            leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm, bottomMargin=2 * cm)
-    extra = []
-    if cot["proyecto"]:
-        extra.append(("Proyecto", cot["proyecto"]))
-    if mostrar_estado:
-        extra.append(("Estado", cot["estado"]))
-    elementos = _bloque_empresa(estilos, empresa) + _encabezado(
-        estilos, "COTIZACIÓN", cot["numero"], cot["fecha"], cliente, extra=extra)
-    elementos += [_tabla_items(estilos, lineas, totales.tasa), Spacer(1, 0.5 * cm), _tabla_totales(totales)]
-    elementos += _bloque_notas(estilos, cot["notas"])
-    doc.build(elementos)
+    _construir(documento.de_cotizacion(cotizacion_id, mostrar_estado), ruta)
 
 
 def exportar_factura(factura_id: int, ruta: str, mostrar_estado: bool | None = None) -> None:
-    conn = db.get_connection()
-    try:
-        fac = conn.execute("SELECT * FROM facturas WHERE id = ?", (factura_id,)).fetchone()
-        if fac is None:
-            raise ValueError("La factura no existe.")
-        cliente = conn.execute("SELECT * FROM clientes WHERE id = ?", (fac["cliente_id"],)).fetchone()
-        empresa = db.empresa_de_factura(factura_id, conn)
-        cot = None
-        if fac["cotizacion_id"]:
-            cot = conn.execute("SELECT numero FROM cotizaciones WHERE id = ?", (fac["cotizacion_id"],)).fetchone()
-            totales = db.totales_cotizacion(fac["cotizacion_id"], conn)
-        else:  # sin cotización de origen: se deriva del total con la tasa de la empresa
-            tasa = (empresa["itbms_tasa"] / 100) if empresa else 0.0
-            subtotal = round(fac["total"] / (1 + tasa), 2)
-            totales = calculo.Totales(subtotal=subtotal, tasa=tasa, itbms=round(fac["total"] - subtotal, 2),
-                                      total=fac["total"])
-        if mostrar_estado is None:
-            mostrar_estado = db.mostrar_estado_pdf(conn)
-    finally:
-        conn.close()
-
-    extra = [("Estado de pago", fac["estado_pago"])] if mostrar_estado else []
-    if fac["fecha_pago"]:
-        extra.append(("Fecha de pago", fac["fecha_pago"]))
-    if cot:
-        extra.append(("Cotización de origen", cot["numero"]))
-
-    estilos = _estilos()
-    doc = SimpleDocTemplate(ruta, pagesize=letter, title=f"Factura {fac['numero']}",
-                            leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm, bottomMargin=2 * cm)
-    elementos = _bloque_empresa(estilos, empresa) + _encabezado(
-        estilos, "FACTURA", fac["numero"], fac["fecha"], cliente, extra=extra)
-    elementos.append(_tabla_totales(totales))
-    elementos += _bloque_notas(estilos, fac["notas"])
-    doc.build(elementos)
+    _construir(documento.de_factura(factura_id, mostrar_estado), ruta)

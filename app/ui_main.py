@@ -10,10 +10,11 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from app import calculo, db, estilo, iconos, pdf
+from app import calculo, db, estilo, iconos, pdf, word
 from app.recursos import ruta_recurso
 from app.ui_comun import (  # noqa: F401  (se reexportan para compatibilidad)
-    DescripcionDelegate, FiltroBar, boton, celda_dinero, celda_estado, encabezado_pagina, exportar_pdf, pagina,
+    DescripcionDelegate, FiltroBar, boton, celda_dinero, celda_estado, encabezado_pagina, exportar_pdf, exportar_word,
+    pagina,
     parsear_numero, tabla_estandar,
 )
 from app.ui_biblioteca import BibliotecaTab
@@ -138,6 +139,9 @@ class CotizacionesTab(QWidget):
         self.btn_pdf = boton("Exportar PDF", "download")
         self.btn_pdf.clicked.connect(self.exportar_pdf)
         acciones.addWidget(self.btn_pdf)
+        self.btn_word = boton("Exportar Word", "word")
+        self.btn_word.clicked.connect(self.exportar_word)
+        acciones.addWidget(self.btn_word)
         lay.addLayout(acciones)
 
         self.refrescar()
@@ -206,6 +210,7 @@ class CotizacionesTab(QWidget):
         self.btn_factura.setEnabled(estado == "aprobada")
         self.btn_items.setEnabled(estado is not None)
         self.btn_pdf.setEnabled(estado is not None)
+        self.btn_word.setEnabled(estado is not None)
         self.btn_items.setText("Abrir / Editar" if estado == "borrador" or estado is None else "Ver detalle")
 
     def cambiar_estado(self):
@@ -226,6 +231,11 @@ class CotizacionesTab(QWidget):
         sel = self._seleccionada()
         if sel:
             exportar_pdf(self, pdf.exportar_cotizacion, sel[0], sel[1])
+
+    def exportar_word(self):
+        sel = self._seleccionada()
+        if sel:
+            exportar_word(self, word.exportar_cotizacion, sel[0], sel[1])
 
     def generar_factura(self):
         sel = self._seleccionada()
@@ -323,8 +333,11 @@ class FacturasTab(QWidget):
         self.btn_notas.clicked.connect(self.editar_notas)
         self.btn_pdf = boton("Exportar PDF", "download")
         self.btn_pdf.clicked.connect(self.exportar_pdf)
+        self.btn_word = boton("Exportar Word", "word")
+        self.btn_word.clicked.connect(self.exportar_word)
         acciones.addWidget(self.btn_notas)
         acciones.addWidget(self.btn_pdf)
+        acciones.addWidget(self.btn_word)
         lay.addLayout(acciones)
         self.refrescar()
 
@@ -335,6 +348,7 @@ class FacturasTab(QWidget):
         self.btn_vencida.setEnabled(estado == "pendiente")
         self.btn_notas.setEnabled(estado is not None)
         self.btn_pdf.setEnabled(estado is not None)
+        self.btn_word.setEnabled(estado is not None)
 
     def _id_seleccionado(self):
         fila = self.tabla.currentRow()
@@ -419,6 +433,13 @@ class FacturasTab(QWidget):
             QMessageBox.information(self, "Selecciona una factura", "Selecciona una factura de la tabla.")
             return
         exportar_pdf(self, pdf.exportar_factura, fid, self.tabla.item(self.tabla.currentRow(), 0).text())
+
+    def exportar_word(self):
+        fid = self._id_seleccionado()
+        if fid is None:
+            QMessageBox.information(self, "Selecciona una factura", "Selecciona una factura de la tabla.")
+            return
+        exportar_word(self, word.exportar_factura, fid, self.tabla.item(self.tabla.currentRow(), 0).text())
 
     def marcar_vencida(self):
         fid = self._id_seleccionado()
