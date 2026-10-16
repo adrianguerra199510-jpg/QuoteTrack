@@ -3,7 +3,7 @@ name: Build Windows (.exe portable)
 on:
   workflow_dispatch:
   push:
-    branches: [claude/new-session-smaoex]
+    branches: [main, claude/new-session-smaoex]
 
 jobs:
   build:
