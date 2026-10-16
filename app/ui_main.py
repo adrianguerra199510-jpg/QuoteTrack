@@ -20,6 +20,7 @@ from app.ui_comun import (  # noqa: F401  (se reexportan para compatibilidad)
 from app.ui_biblioteca import BibliotecaTab
 from app.ui_empresas import EmpresasTab
 from app.ui_items import ItemsDialog  # noqa: F401
+from app.ui_vista_previa import vista_previa
 
 COT_ESTADO = 5   # columna «Estado» de la tabla de cotizaciones
 FAC_ESTADO = 4   # columna «Estado de pago» de la tabla de facturas
@@ -209,6 +210,9 @@ class CotizacionesTab(QWidget):
         self.btn_factura = boton("Generar factura", "receipt")
         self.btn_factura.clicked.connect(self.generar_factura)
         acciones.addWidget(self.btn_factura)
+        self.btn_vista = boton("Vista previa", "eye", tooltip="Ver cómo saldrá la cotización antes de exportarla")
+        self.btn_vista.clicked.connect(self.vista_previa)
+        acciones.addWidget(self.btn_vista)
         self.btn_pdf = boton("Exportar PDF", "download")
         self.btn_pdf.clicked.connect(self.exportar_pdf)
         acciones.addWidget(self.btn_pdf)
@@ -284,6 +288,7 @@ class CotizacionesTab(QWidget):
         self.btn_items.setEnabled(estado is not None)
         self.btn_pdf.setEnabled(estado is not None)
         self.btn_word.setEnabled(estado is not None)
+        self.btn_vista.setEnabled(estado is not None)
         self.btn_items.setText("Abrir / Editar" if estado == "borrador" or estado is None else "Ver detalle")
 
     def cambiar_estado(self):
@@ -309,6 +314,11 @@ class CotizacionesTab(QWidget):
         sel = self._seleccionada()
         if sel:
             exportar_word(self, word.exportar_cotizacion, sel[0], sel[1])
+
+    def vista_previa(self):
+        sel = self._seleccionada()
+        if sel:
+            vista_previa(self, "cotizacion", sel[0], sel[1])
 
     def generar_factura(self):
         sel = self._seleccionada()
@@ -408,7 +418,10 @@ class FacturasTab(QWidget):
         self.btn_pdf.clicked.connect(self.exportar_pdf)
         self.btn_word = boton("Exportar Word", "word")
         self.btn_word.clicked.connect(self.exportar_word)
+        self.btn_vista = boton("Vista previa", "eye", tooltip="Ver cómo saldrá la factura antes de exportarla")
+        self.btn_vista.clicked.connect(self.vista_previa)
         acciones.addWidget(self.btn_notas)
+        acciones.addWidget(self.btn_vista)
         acciones.addWidget(self.btn_pdf)
         acciones.addWidget(self.btn_word)
         lay.addLayout(acciones)
@@ -422,6 +435,7 @@ class FacturasTab(QWidget):
         self.btn_notas.setEnabled(estado is not None)
         self.btn_pdf.setEnabled(estado is not None)
         self.btn_word.setEnabled(estado is not None)
+        self.btn_vista.setEnabled(estado is not None)
 
     def _id_seleccionado(self):
         fila = self.tabla.currentRow()
@@ -506,6 +520,13 @@ class FacturasTab(QWidget):
             QMessageBox.information(self, "Selecciona una factura", "Selecciona una factura de la tabla.")
             return
         exportar_pdf(self, pdf.exportar_factura, fid, self.tabla.item(self.tabla.currentRow(), 0).text())
+
+    def vista_previa(self):
+        fid = self._id_seleccionado()
+        if fid is None:
+            QMessageBox.information(self, "Selecciona una factura", "Selecciona una factura de la tabla.")
+            return
+        vista_previa(self, "factura", fid, self.tabla.item(self.tabla.currentRow(), 0).text())
 
     def exportar_word(self):
         fid = self._id_seleccionado()

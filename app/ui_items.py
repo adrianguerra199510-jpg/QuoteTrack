@@ -11,6 +11,7 @@ from app.calculo import Apu, Cargo, Linea
 from app.ui_apu import AjustesApuDialog, ApuDialog
 from app.ui_biblioteca import SelectorConceptosDialog, combo_modalidad
 from app.ui_comun import DescripcionDelegate, boton, parsear_numero, tabla_estandar
+from app.ui_vista_previa import vista_previa
 
 COL_COD, COL_DESC, COL_TIPO, COL_UD, COL_CANT, COL_PRECIO, COL_IMPORTE, COL_ITBMS = range(8)
 CARGO_CONCEPTO, CARGO_TIPO, CARGO_VALOR, CARGO_MONTO, CARGO_ITBMS = range(5)
@@ -190,11 +191,17 @@ class ItemsDialog(QDialog):
         pv.addWidget(self.lbl_totales)
         lp = QHBoxLayout()
         pv.addLayout(lp)
-        lp.addStretch()
         self.btn_cancelar = boton("Cancelar" if editable else "Cerrar", "x")
         self.btn_guardar = boton("Guardar", "save", "primario")
+        self.btn_vista = boton("Guardar y vista previa" if editable else "Vista previa", "eye",
+                               tooltip="Muestra cómo saldrá la cotización en el PDF" + (
+                                   " (guarda primero los cambios)" if editable else ""))
+        self.numero = numero
         self.btn_cancelar.clicked.connect(self.reject)
         self.btn_guardar.clicked.connect(self.guardar)
+        self.btn_vista.clicked.connect(self.vista_previa)
+        lp.addWidget(self.btn_vista)
+        lp.addStretch()
         lp.addWidget(self.btn_cancelar)
         if editable:
             lp.addWidget(self.btn_guardar)
@@ -713,11 +720,21 @@ class ItemsDialog(QDialog):
             lineas[0].nivel = 0
         return lineas, cargos, None
 
+    def vista_previa(self):
+        """Muestra la cotización como saldrá en el PDF; en modo edición guarda antes los cambios (sin cerrar)."""
+        if self.editable and not self._guardar_en_db():
+            return
+        vista_previa(self, "cotizacion", self.cotizacion_id, self.numero)
+
     def guardar(self):
+        if self._guardar_en_db():
+            self.accept()
+
+    def _guardar_en_db(self) -> bool:
         lineas, cargos, error = self._validar()
         if error:
             QMessageBox.warning(self, "Datos inválidos", error)
-            return
+            return False
         conn = db.get_connection()
         if self.empresa_combo.currentData() is not None:
             db.cambiar_empresa_cotizacion(self.cotizacion_id, self.empresa_combo.currentData(), conn)
@@ -725,4 +742,4 @@ class ItemsDialog(QDialog):
         db.guardar_notas(self.cotizacion_id, self.notas_edit.toPlainText().strip("\n"), conn)
         db.guardar_proyecto(self.cotizacion_id, self.proyecto_edit.text().strip(), conn)
         conn.close()
-        self.accept()
+        return True
