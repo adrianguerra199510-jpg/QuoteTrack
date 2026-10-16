@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from PySide6.QtWidgets import QMessageBox
 
@@ -76,19 +78,25 @@ def test_botones_de_exportar_llaman_a_sus_acciones(conn, qapp):
     sin.done(0)
 
 
-def test_la_carpeta_temporal_se_borra_al_cerrar(conn, qapp):
-    d = VistaPreviaDialog(lambda ruta: pdf.exportar_cotizacion(1, ruta))
-    carpeta = d.ruta.parent
-    assert d.ruta.exists()
+def test_no_queda_ningun_archivo_temporal_abierto(conn, qapp):
+    """El PDF se lee a memoria y la carpeta temporal se borra al generarlo (en Windows un archivo abierto no se borra)."""
+    rutas = []
+
+    def generar(ruta):
+        rutas.append(Path(ruta))
+        pdf.exportar_cotizacion(1, ruta)
+
+    d = VistaPreviaDialog(generar)
+    assert d.error is None and d.doc.pageCount() >= 1
+    assert not rutas[0].exists() and not rutas[0].parent.exists()      # ya se borró, con el diálogo aún abierto
     d.done(0)
-    assert not carpeta.exists()
 
 
 def test_vista_previa_muestra_lo_mismo_que_el_pdf_exportado(conn, qapp, tmp_path):
     db.guardar_cotizacion(1, [Linea("item", 0, "Servicio especial", 3, 250.0, True, "m²")], [], conn)
     d = VistaPreviaDialog(lambda ruta: pdf.exportar_cotizacion(1, ruta))
     pdf.exportar_cotizacion(1, str(tmp_path / "x.pdf"))
-    assert d.ruta.stat().st_size > 0 and abs(d.ruta.stat().st_size - (tmp_path / "x.pdf").stat().st_size) < 200
+    assert d.pdf_bytes[:5] == b"%PDF-" and abs(len(d.pdf_bytes) - (tmp_path / "x.pdf").stat().st_size) < 200
     d.done(0)
 
 

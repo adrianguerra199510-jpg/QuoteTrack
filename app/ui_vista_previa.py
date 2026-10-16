@@ -2,7 +2,7 @@
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QMessageBox, QScrollArea, QVBoxLayout, QWidget
@@ -22,8 +22,8 @@ class VistaPreviaDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(titulo)
         self.resize(940, 860)
-        self._tmp = tempfile.TemporaryDirectory(prefix="quotetrack_")
-        self.ruta = Path(self._tmp.name) / "vista_previa.pdf"
+        self.pdf_bytes = b""
+        self._buffer = None
         self.zoom = 100
         self.paginas: list[QLabel] = []
         self.doc = None
@@ -84,9 +84,17 @@ class VistaPreviaDialog(QDialog):
         self.scroll.verticalScrollBar().valueChanged.connect(lambda *_: self._actualizar_pagina())
 
         try:
-            generar_pdf(str(self.ruta))
+            # El PDF se genera en una carpeta temporal, se lee a memoria y la carpeta se borra enseguida: así no
+            # queda ningún archivo abierto (Windows no deja borrar un archivo en uso).
+            with tempfile.TemporaryDirectory(prefix="quotetrack_", ignore_cleanup_errors=True) as carpeta:
+                ruta = Path(carpeta) / "vista_previa.pdf"
+                generar_pdf(str(ruta))
+                self.pdf_bytes = ruta.read_bytes()
+            self._buffer = QBuffer(self)
+            self._buffer.setData(QByteArray(self.pdf_bytes))
+            self._buffer.open(QIODevice.ReadOnly)
             self.doc = QPdfDocument(self)
-            self.doc.load(str(self.ruta))
+            self.doc.load(self._buffer)
             if self.doc.pageCount() < 1:
                 raise ValueError("El documento no tiene páginas.")
         except Exception as e:      # ValueError de datos, OSError, etc.
@@ -153,10 +161,9 @@ class VistaPreviaDialog(QDialog):
 
     def done(self, r):
         if self.doc is not None:
-            self.doc.close()     # libera el archivo (Windows no deja borrar un archivo abierto)
+            self.doc.close()
             self.doc = None
         super().done(r)
-        self._tmp.cleanup()
 
 
 def vista_previa(parent, tipo: str, registro_id: int, numero: str) -> VistaPreviaDialog:
