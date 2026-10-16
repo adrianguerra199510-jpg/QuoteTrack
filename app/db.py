@@ -709,3 +709,32 @@ def obtener_notas_factura(factura_id: int, conn: sqlite3.Connection) -> str:
 def guardar_notas_factura(factura_id: int, notas: str, conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE facturas SET notas = ? WHERE id = ?", (notas, factura_id))
     conn.commit()
+
+
+# ---------- Clientes ----------
+
+def guardar_cliente(datos: dict, conn: sqlite3.Connection, cliente_id: int | None = None) -> int:
+    """Crea (o actualiza si se da `cliente_id`) un cliente. Lanza ValueError si falta el nombre."""
+    nombre = (datos.get("nombre") or "").strip()
+    if not nombre:
+        raise ValueError("El nombre del cliente es obligatorio.")
+    valores = (nombre, (datos.get("identificacion") or "").strip(), (datos.get("contacto") or "").strip())
+    if cliente_id is None:
+        cur = conn.execute("INSERT INTO clientes (nombre, identificacion, contacto) VALUES (?, ?, ?)", valores)
+        cliente_id = cur.lastrowid
+    else:
+        conn.execute("UPDATE clientes SET nombre = ?, identificacion = ?, contacto = ? WHERE id = ?",
+                     (*valores, cliente_id))
+    conn.commit()
+    return cliente_id
+
+
+def eliminar_cliente(cliente_id: int, conn: sqlite3.Connection) -> None:
+    """No permite borrar un cliente con cotizaciones o facturas."""
+    usos = conn.execute(
+        "SELECT (SELECT COUNT(*) FROM cotizaciones WHERE cliente_id = ?) + "
+        "(SELECT COUNT(*) FROM facturas WHERE cliente_id = ?) AS n", (cliente_id, cliente_id)).fetchone()["n"]
+    if usos:
+        raise ValueError(f"No se puede eliminar: el cliente tiene {usos} cotización(es)/factura(s) asociadas.")
+    conn.execute("DELETE FROM clientes WHERE id = ?", (cliente_id,))
+    conn.commit()

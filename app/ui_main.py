@@ -36,7 +36,8 @@ class ClientesTab(QWidget):
     def __init__(self):
         super().__init__()
         lay = pagina(self)
-        lay.addWidget(encabezado_pagina("Clientes", "Catálogo de clientes para tus cotizaciones y facturas."))
+        lay.addWidget(encabezado_pagina(
+            "Clientes", "Catálogo de clientes. Selecciona uno de la tabla para editarlo o eliminarlo."))
 
         card = tarjeta()
         cl = QVBoxLayout(card)
@@ -50,45 +51,117 @@ class ClientesTab(QWidget):
         form.addRow("Identificación (RUC/Cédula):", self.id_edit)
         form.addRow("Contacto:", self.contacto_edit)
         cl.addLayout(form)
-        btn_add = boton("Agregar cliente", "plus", "primario")
-        btn_add.clicked.connect(self.agregar_cliente)
         fila = QHBoxLayout()
+        self.btn_eliminar = boton("Eliminar", "trash", "peligro")
+        self.btn_limpiar = boton("Limpiar", "x")
+        self.btn_guardar = boton("Guardar cambios", "save")
+        self.btn_add = boton("Agregar cliente", "plus", "primario")
+        self.btn_eliminar.clicked.connect(self.eliminar_cliente)
+        self.btn_limpiar.clicked.connect(self.limpiar)
+        self.btn_guardar.clicked.connect(self.guardar_cambios)
+        self.btn_add.clicked.connect(self.agregar_cliente)
+        fila.addWidget(self.btn_eliminar)
         fila.addStretch()
-        fila.addWidget(btn_add)
+        for b in (self.btn_limpiar, self.btn_guardar, self.btn_add):
+            fila.addWidget(b)
         cl.addLayout(fila)
         lay.addWidget(card)
 
-        self.tabla = tabla_estandar(["ID", "Nombre", "Identificación"], estirar=1)
+        self.tabla = tabla_estandar(["ID", "Nombre", "Identificación", "Contacto"], estirar=1)
         self.tabla.setColumnWidth(0, 60)
+        self.tabla.currentCellChanged.connect(lambda *_: self._cargar_seleccion())
         lay.addWidget(self.tabla, 1)
         self.refrescar()
 
-    def agregar_cliente(self):
-        nombre = self.nombre_edit.text().strip()
-        if not nombre:
-            QMessageBox.warning(self, "Falta nombre", "El nombre del cliente es obligatorio.")
-            return
-        conn = db.get_connection()
-        conn.execute(
-            "INSERT INTO clientes (nombre, identificacion, contacto) VALUES (?, ?, ?)",
-            (nombre, self.id_edit.text().strip(), self.contacto_edit.text().strip()),
-        )
-        conn.commit()
-        conn.close()
+    def _id_seleccionado(self):
+        fila = self.tabla.currentRow()
+        item = self.tabla.item(fila, 1) if fila >= 0 else None
+        return item.data(Qt.UserRole) if item else None
+
+    def _datos(self):
+        return {"nombre": self.nombre_edit.text(), "identificacion": self.id_edit.text(),
+                "contacto": self.contacto_edit.text()}
+
+    def _cargar_seleccion(self):
+        """Al seleccionar una fila se cargan sus datos en el formulario para editarlos."""
+        fila = self.tabla.currentRow()
+        hay = fila >= 0 and self._id_seleccionado() is not None
+        if hay:
+            self.nombre_edit.setText(self.tabla.item(fila, 1).text())
+            self.id_edit.setText(self.tabla.item(fila, 2).text())
+            self.contacto_edit.setText(self.tabla.item(fila, 3).text())
+        self.btn_guardar.setEnabled(hay)
+        self.btn_eliminar.setEnabled(hay)
+
+    def limpiar(self):
+        self.tabla.clearSelection()
+        self.tabla.setCurrentCell(-1, -1)
         self.nombre_edit.clear()
         self.id_edit.clear()
         self.contacto_edit.clear()
+        self._cargar_seleccion()
+
+    def agregar_cliente(self):
+        conn = db.get_connection()
+        try:
+            db.guardar_cliente(self._datos(), conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Falta nombre", str(e))
+            return
+        finally:
+            conn.close()
+        self.limpiar()
+        self.refrescar()
+
+    def guardar_cambios(self):
+        cid = self._id_seleccionado()
+        if cid is None:
+            return
+        conn = db.get_connection()
+        try:
+            db.guardar_cliente(self._datos(), conn, cid)
+        except ValueError as e:
+            QMessageBox.warning(self, "Cliente", str(e))
+            return
+        finally:
+            conn.close()
+        self.refrescar()
+
+    def eliminar_cliente(self):
+        cid = self._id_seleccionado()
+        if cid is None:
+            return
+        if QMessageBox.question(self, "Eliminar cliente", "¿Eliminar el cliente seleccionado?") != QMessageBox.Yes:
+            return
+        conn = db.get_connection()
+        try:
+            db.eliminar_cliente(cid, conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Eliminar cliente", str(e))
+            return
+        finally:
+            conn.close()
+        self.limpiar()
         self.refrescar()
 
     def refrescar(self):
         conn = db.get_connection()
-        filas = conn.execute("SELECT id, nombre, identificacion FROM clientes ORDER BY nombre").fetchall()
+        filas = conn.execute("SELECT id, nombre, identificacion, contacto FROM clientes ORDER BY nombre").fetchall()
         conn.close()
+        sel = self._id_seleccionado()
+        self.tabla.blockSignals(True)
         self.tabla.setRowCount(len(filas))
         for i, fila in enumerate(filas):
+            nombre = QTableWidgetItem(fila["nombre"])
+            nombre.setData(Qt.UserRole, fila["id"])
             self.tabla.setItem(i, 0, QTableWidgetItem(str(fila["id"])))
-            self.tabla.setItem(i, 1, QTableWidgetItem(fila["nombre"]))
+            self.tabla.setItem(i, 1, nombre)
             self.tabla.setItem(i, 2, QTableWidgetItem(fila["identificacion"] or ""))
+            self.tabla.setItem(i, 3, QTableWidgetItem(fila["contacto"] or ""))
+            if fila["id"] == sel:
+                self.tabla.setCurrentCell(i, 1)
+        self.tabla.blockSignals(False)
+        self._cargar_seleccion()
 
 
 class CotizacionesTab(QWidget):
