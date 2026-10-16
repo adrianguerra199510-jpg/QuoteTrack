@@ -94,10 +94,12 @@ def test_encabezado_sin_solapamiento():
 
 
 def test_encabezado_empresa_con_nombres_largos(conn, tmp_path):
-    db.guardar_config("empresa_nombre", "INTEGRO " + "SOCIEDAD ANONIMA " * 4, conn)
-    db.guardar_config("empresa_correo", "correo.muy.largo.sin.espacios." * 4 + "@ejemplo.com", conn)
-    lineas = pdf._bloque_empresa(pdf._estilos(), conn)
-    for p in lineas[:-1]:
+    eid = db.empresa_predeterminada_id(conn)
+    db.guardar_empresa({"nombre": "INTEGRO " + "SOCIEDAD ANONIMA " * 4,
+                        "correo": "correo.muy.largo.sin.espacios." * 4 + "@ejemplo.com",
+                        "direccion": "Calle " * 30, "itbms_tasa": 7}, conn, eid)
+    lineas = pdf._lineas_empresa(pdf._estilos(), db.obtener_empresa(eid, conn))
+    for p in lineas:
         w, h = p.wrap(pdf.ANCHO_EMPRESA, 1000)
         assert w <= pdf.ANCHO_EMPRESA + 1
         assert h >= p.style.leading  # cada línea ocupa su propio interlineado: sin solapes
@@ -105,7 +107,7 @@ def test_encabezado_empresa_con_nombres_largos(conn, tmp_path):
 
 
 def test_itbms_exento_en_pdf(conn, tmp_path, pdf_sin_comprimir):
-    db.guardar_config("itbms_tasa", "0", conn)
+    db.guardar_empresa({"nombre": "Exenta SA", "itbms_tasa": 0}, conn, db.empresa_predeterminada_id(conn))
     db.guardar_items(1, [("x", 1, 100.0)], conn)
     ruta = tmp_path / "c.pdf"
     pdf.exportar_cotizacion(1, str(ruta))
@@ -126,3 +128,26 @@ def test_encabezado_de_seccion_no_queda_solo_al_pie():
     elementos = pdf._bloque_notas(pdf._estilos(), "ALCANCE\n• uno\n\nEXCLUSIONES\n• dos")
     secciones = [e for e in elementos if isinstance(e, Paragraph) and e.style.name == "NotasSeccion"]
     assert len(secciones) == 2 and all(e.style.keepWithNext for e in secciones)
+
+
+def test_pdf_con_grupos_subitems_y_costos(conn, tmp_path, pdf_sin_comprimir):
+    from app.calculo import Cargo, Linea
+    db.guardar_cotizacion(1, [
+        Linea("grupo", 0, "Albanileria"),
+        Linea("item", 1, "Muro de bloque de 6", 10, 20.0),
+        Linea("item", 1, "Muro de bloque de 4", 5, 10.0, False),
+        Linea("item", 0, "Limpieza", 1, 100.0),
+    ], [Cargo("Administracion", "porcentaje", 10), Cargo("Utilidad", "monto", 40.0, False)], conn)
+    ruta = tmp_path / "c.pdf"
+    pdf.exportar_cotizacion(1, str(ruta))
+    txt = contenido(ruta)
+    for esperado in ("01.1", "01.2", "Albanileria", "exento de ITBMS", "Administracion \\(10%\\):",
+                     "B/. 35.00", "Utilidad:", "B/. 40.00", "ITBMS \\(7%\\):", "B/. 23.45", "B/. 448.45"):
+        assert esperado in txt, esperado
+    # factura: mismos totales, con los costos adicionales
+    db.cambiar_estado_cotizacion(1, "enviada", conn)
+    db.cambiar_estado_cotizacion(1, "aprobada", conn)
+    db.generar_factura(1, conn)
+    pdf.exportar_factura(1, str(tmp_path / "f.pdf"))
+    txt_f = contenido(tmp_path / "f.pdf")
+    assert "Administracion \\(10%\\):" in txt_f and "B/. 448.45" in txt_f

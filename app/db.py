@@ -6,6 +6,9 @@ import sqlite3
 from pathlib import Path
 from datetime import date
 
+from app import calculo
+from app.calculo import Cargo, Linea
+
 DB_PATH = Path(__file__).resolve().parent.parent / "quotetrack.db"
 
 SCHEMA = """
@@ -51,6 +54,28 @@ CREATE TABLE IF NOT EXISTS configuracion (
     valor TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS empresas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
+    subtitulo TEXT NOT NULL DEFAULT '',
+    correo TEXT NOT NULL DEFAULT '',
+    telefono TEXT NOT NULL DEFAULT '',
+    direccion TEXT NOT NULL DEFAULT '',
+    ruc TEXT NOT NULL DEFAULT '',
+    itbms_tasa REAL NOT NULL DEFAULT 7,      -- en %, 0 = exento
+    logo BLOB,
+    predeterminada INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS cotizacion_cargos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cotizacion_id INTEGER NOT NULL REFERENCES cotizaciones(id) ON DELETE CASCADE,
+    concepto TEXT NOT NULL,
+    tipo TEXT NOT NULL DEFAULT 'porcentaje',  -- porcentaje | monto
+    valor REAL NOT NULL DEFAULT 0,
+    aplica_itbms INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_facturas_cotizacion
     ON facturas(cotizacion_id) WHERE cotizacion_id IS NOT NULL;
 """
@@ -61,6 +86,33 @@ def get_connection() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _agregar_columna(conn: sqlite3.Connection, tabla: str, columna: str, definicion: str) -> None:
+    if columna not in [c["name"] for c in conn.execute(f"PRAGMA table_info({tabla})")]:
+        conn.execute(f"ALTER TABLE {tabla} ADD COLUMN {columna} {definicion}")
+
+
+def _migrar_empresa_inicial(conn: sqlite3.Connection) -> None:
+    """Si no hay empresas, crea la predeterminada con los datos de la configuración anterior
+    (nombre/subtítulo/correo/tasa de ITBMS) y se la asigna a lo que ya existía."""
+    if conn.execute("SELECT 1 FROM empresas LIMIT 1").fetchone() is None:
+        def cfg(clave, defecto):
+            fila = conn.execute("SELECT valor FROM configuracion WHERE clave = ?", (clave,)).fetchone()
+            return fila["valor"] if fila else defecto
+        try:
+            tasa = max(0.0, float(cfg("itbms_tasa", "7").replace(",", ".")))
+        except ValueError:
+            tasa = 7.0
+        conn.execute(
+            "INSERT INTO empresas (nombre, subtitulo, correo, itbms_tasa, predeterminada) VALUES (?, ?, ?, ?, 1)",
+            (cfg("empresa_nombre", "INTEGRO SA"), cfg("empresa_subtitulo", "INGENIERIA ESTRUCTURAL"),
+             cfg("empresa_correo", ""), tasa),
+        )
+    predeterminada = conn.execute(
+        "SELECT id FROM empresas ORDER BY predeterminada DESC, id LIMIT 1").fetchone()["id"]
+    conn.execute("UPDATE cotizaciones SET empresa_id = ? WHERE empresa_id IS NULL", (predeterminada,))
+    conn.execute("UPDATE facturas SET empresa_id = ? WHERE empresa_id IS NULL", (predeterminada,))
 
 
 def init_db() -> None:
@@ -74,8 +126,16 @@ def init_db() -> None:
     if "notas" not in columnas:
         conn.execute("ALTER TABLE facturas ADD COLUMN notas TEXT NOT NULL DEFAULT ''")
     conn.execute("UPDATE cotizaciones SET notas = '' WHERE notas IS NULL")
-    if "proyecto" not in [c["name"] for c in conn.execute("PRAGMA table_info(cotizaciones)")]:
-        conn.execute("ALTER TABLE cotizaciones ADD COLUMN proyecto TEXT NOT NULL DEFAULT ''")
+    _agregar_columna(conn, "cotizaciones", "proyecto", "TEXT NOT NULL DEFAULT ''")
+    # Migración: empresas, costos adicionales, grupos/sub-ítems e ITBMS por línea
+    _agregar_columna(conn, "cotizaciones", "empresa_id", "INTEGER REFERENCES empresas(id)")
+    _agregar_columna(conn, "cotizaciones", "cargos", "REAL NOT NULL DEFAULT 0")
+    _agregar_columna(conn, "cotizaciones", "itbms_tasa", "REAL")  # NULL = cotización anterior a este campo
+    _agregar_columna(conn, "facturas", "empresa_id", "INTEGER REFERENCES empresas(id)")
+    _agregar_columna(conn, "cotizacion_items", "tipo", "TEXT NOT NULL DEFAULT 'item'")
+    _agregar_columna(conn, "cotizacion_items", "nivel", "INTEGER NOT NULL DEFAULT 0")
+    _agregar_columna(conn, "cotizacion_items", "aplica_itbms", "INTEGER NOT NULL DEFAULT 1")
+    _migrar_empresa_inicial(conn)
     conn.commit()
     conn.close()
 
@@ -90,41 +150,180 @@ def next_numero(prefijo: str, tabla: str, conn: sqlite3.Connection) -> str:
     return f"{prefijo}-{anio}-{n:04d}"
 
 
-ITBMS_RATE = 0.07  # ITBMS Panamá 7%
+ITBMS_RATE = 0.07  # ITBMS Panamá 7% (tasa por defecto de una empresa nueva)
 
 
-def calcular_totales(items, tasa: float = ITBMS_RATE) -> tuple[float, float, float]:
-    """Devuelve (subtotal, itbms, total) para una lista de (descripcion, cantidad, precio)."""
-    subtotal = round(sum(cant * precio for _desc, cant, precio in items), 2)
-    itbms = round(subtotal * tasa, 2)
-    return subtotal, itbms, round(subtotal + itbms, 2)
+def obtener_lineas(cotizacion_id: int, conn: sqlite3.Connection) -> list[Linea]:
+    filas = conn.execute(
+        "SELECT tipo, nivel, descripcion, cantidad, precio_unitario, aplica_itbms "
+        "FROM cotizacion_items WHERE cotizacion_id = ? ORDER BY id",
+        (cotizacion_id,),
+    ).fetchall()
+    return [Linea(f["tipo"], f["nivel"], f["descripcion"], f["cantidad"], f["precio_unitario"],
+                  bool(f["aplica_itbms"])) for f in filas]
+
+
+def obtener_cargos(cotizacion_id: int, conn: sqlite3.Connection) -> list[Cargo]:
+    filas = conn.execute(
+        "SELECT concepto, tipo, valor, aplica_itbms FROM cotizacion_cargos WHERE cotizacion_id = ? ORDER BY id",
+        (cotizacion_id,),
+    ).fetchall()
+    return [Cargo(f["concepto"], f["tipo"], f["valor"], bool(f["aplica_itbms"])) for f in filas]
 
 
 def obtener_items(cotizacion_id: int, conn: sqlite3.Connection) -> list[tuple[str, float, float]]:
-    filas = conn.execute(
-        "SELECT descripcion, cantidad, precio_unitario FROM cotizacion_items "
-        "WHERE cotizacion_id = ? ORDER BY id",
-        (cotizacion_id,),
-    ).fetchall()
-    return [(f["descripcion"], f["cantidad"], f["precio_unitario"]) for f in filas]
+    """Solo los ítems (sin encabezados de grupo) como (descripción, cantidad, precio)."""
+    return [(l.descripcion, l.cantidad, l.precio) for l in obtener_lineas(cotizacion_id, conn) if not l.es_grupo]
+
+
+def tasa_de_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> float:
+    """Tasa de ITBMS (fracción) vigente al guardar la cotización; para cotizaciones antiguas se deduce."""
+    fila = conn.execute(
+        "SELECT itbms_tasa, itbms, subtotal, cargos FROM cotizaciones WHERE id = ?", (cotizacion_id,),
+    ).fetchone()
+    if fila is None:
+        return 0.0
+    if fila["itbms_tasa"] is not None:
+        return fila["itbms_tasa"]
+    if fila["itbms"] == 0:
+        return 0.0
+    base = fila["subtotal"] + fila["cargos"]
+    return round(fila["itbms"] / base, 4) if base else ITBMS_RATE
+
+
+def totales_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> calculo.Totales:
+    return calculo.calcular(obtener_lineas(cotizacion_id, conn), obtener_cargos(cotizacion_id, conn),
+                            tasa_de_cotizacion(cotizacion_id, conn))
+
+
+def guardar_cotizacion(cotizacion_id: int, lineas, cargos, conn: sqlite3.Connection,
+                       tasa: float | None = None) -> calculo.Totales:
+    """Reemplaza líneas y costos adicionales y actualiza los totales.
+    `tasa` (fracción) por defecto es la de la empresa de la cotización."""
+    lineas, cargos = list(lineas), list(cargos)
+    if tasa is None:
+        empresa = empresa_de_cotizacion(cotizacion_id, conn)
+        tasa = empresa["itbms_tasa"] / 100 if empresa else 0.0
+    conn.execute("DELETE FROM cotizacion_items WHERE cotizacion_id = ?", (cotizacion_id,))
+    conn.executemany(
+        "INSERT INTO cotizacion_items (cotizacion_id, descripcion, cantidad, precio_unitario, tipo, nivel, aplica_itbms) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(cotizacion_id, l.descripcion, l.cantidad, l.precio, l.tipo, l.nivel, int(l.aplica_itbms)) for l in lineas],
+    )
+    conn.execute("DELETE FROM cotizacion_cargos WHERE cotizacion_id = ?", (cotizacion_id,))
+    conn.executemany(
+        "INSERT INTO cotizacion_cargos (cotizacion_id, concepto, tipo, valor, aplica_itbms) VALUES (?, ?, ?, ?, ?)",
+        [(cotizacion_id, c.concepto, c.tipo, c.valor, int(c.aplica_itbms)) for c in cargos],
+    )
+    t = calculo.calcular(lineas, cargos, tasa)
+    conn.execute(
+        "UPDATE cotizaciones SET subtotal = ?, cargos = ?, itbms = ?, total = ?, itbms_tasa = ? WHERE id = ?",
+        (t.subtotal, t.cargos_total, t.itbms, t.total, tasa, cotizacion_id),
+    )
+    conn.commit()
+    return t
 
 
 def guardar_items(cotizacion_id: int, items, conn: sqlite3.Connection) -> tuple[float, float, float]:
-    """Reemplaza las líneas de la cotización y actualiza subtotal/ITBMS/total."""
-    items = list(items)
-    conn.execute("DELETE FROM cotizacion_items WHERE cotizacion_id = ?", (cotizacion_id,))
-    conn.executemany(
-        "INSERT INTO cotizacion_items (cotizacion_id, descripcion, cantidad, precio_unitario) "
-        "VALUES (?, ?, ?, ?)",
-        [(cotizacion_id, d, c, p) for d, c, p in items],
-    )
-    subtotal, itbms, total = calcular_totales(items, obtener_tasa_itbms(conn))
-    conn.execute(
-        "UPDATE cotizaciones SET subtotal = ?, itbms = ?, total = ? WHERE id = ?",
-        (subtotal, itbms, total, cotizacion_id),
+    """Compatibilidad: guarda [(descripción, cantidad, precio), …] como ítems independientes
+    (conserva los costos adicionales existentes) y devuelve (subtotal, itbms, total)."""
+    t = guardar_cotizacion(cotizacion_id, calculo.desde_tuplas(items), obtener_cargos(cotizacion_id, conn), conn)
+    return t.subtotal, t.itbms, t.total
+
+
+def crear_cotizacion(cliente_id: int, conn: sqlite3.Connection, empresa_id: int | None = None) -> tuple[int, str]:
+    """Crea una cotización en borrador y devuelve (id, número)."""
+    if empresa_id is None:
+        empresa_id = empresa_predeterminada_id(conn)
+    numero = next_numero("COT", "cotizaciones", conn)
+    cur = conn.execute(
+        "INSERT INTO cotizaciones (numero, cliente_id, fecha, estado, empresa_id) VALUES (?, ?, ?, 'borrador', ?)",
+        (numero, cliente_id, date.today().isoformat(), empresa_id),
     )
     conn.commit()
-    return subtotal, itbms, total
+    return cur.lastrowid, numero
+
+
+def cambiar_empresa_cotizacion(cotizacion_id: int, empresa_id: int, conn: sqlite3.Connection) -> None:
+    conn.execute("UPDATE cotizaciones SET empresa_id = ? WHERE id = ?", (empresa_id, cotizacion_id))
+    conn.commit()
+
+
+# ---------- Empresas ----------
+
+CAMPOS_EMPRESA = ("nombre", "subtitulo", "correo", "telefono", "direccion", "ruc", "itbms_tasa", "logo")
+
+
+def listar_empresas(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM empresas ORDER BY predeterminada DESC, nombre").fetchall()
+
+
+def obtener_empresa(empresa_id: int | None, conn: sqlite3.Connection) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM empresas WHERE id = ?", (empresa_id,)).fetchone()
+
+
+def empresa_predeterminada_id(conn: sqlite3.Connection) -> int | None:
+    fila = conn.execute("SELECT id FROM empresas ORDER BY predeterminada DESC, id LIMIT 1").fetchone()
+    return fila["id"] if fila else None
+
+
+def empresa_de_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> sqlite3.Row | None:
+    """Empresa de la cotización (o la predeterminada si no tiene asignada)."""
+    fila = conn.execute("SELECT empresa_id FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()
+    empresa = obtener_empresa(fila["empresa_id"], conn) if fila and fila["empresa_id"] else None
+    return empresa or obtener_empresa(empresa_predeterminada_id(conn), conn)
+
+
+def empresa_de_factura(factura_id: int, conn: sqlite3.Connection) -> sqlite3.Row | None:
+    fila = conn.execute("SELECT empresa_id FROM facturas WHERE id = ?", (factura_id,)).fetchone()
+    empresa = obtener_empresa(fila["empresa_id"], conn) if fila and fila["empresa_id"] else None
+    return empresa or obtener_empresa(empresa_predeterminada_id(conn), conn)
+
+
+def guardar_empresa(datos: dict, conn: sqlite3.Connection, empresa_id: int | None = None) -> int:
+    """Crea (o actualiza si se da `empresa_id`) una empresa. Lanza ValueError si faltan datos."""
+    nombre = (datos.get("nombre") or "").strip()
+    if not nombre:
+        raise ValueError("El nombre de la empresa es obligatorio.")
+    tasa = float(datos.get("itbms_tasa", 7) or 0)
+    if tasa < 0:
+        raise ValueError("La tasa de ITBMS no puede ser negativa.")
+    valores = [nombre if c == "nombre" else tasa if c == "itbms_tasa" else
+               datos.get(c) if c == "logo" else (datos.get(c) or "").strip() for c in CAMPOS_EMPRESA]
+    if empresa_id is None:
+        primera = conn.execute("SELECT 1 FROM empresas LIMIT 1").fetchone() is None
+        cur = conn.execute(
+            f"INSERT INTO empresas ({', '.join(CAMPOS_EMPRESA)}, predeterminada) "
+            f"VALUES ({', '.join('?' * len(CAMPOS_EMPRESA))}, ?)",
+            (*valores, int(primera)),
+        )
+        empresa_id = cur.lastrowid
+    else:
+        conn.execute(f"UPDATE empresas SET {', '.join(c + ' = ?' for c in CAMPOS_EMPRESA)} WHERE id = ?",
+                     (*valores, empresa_id))
+    conn.commit()
+    return empresa_id
+
+
+def establecer_empresa_predeterminada(empresa_id: int, conn: sqlite3.Connection) -> None:
+    conn.execute("UPDATE empresas SET predeterminada = (id = ?)", (empresa_id,))
+    conn.commit()
+
+
+def eliminar_empresa(empresa_id: int, conn: sqlite3.Connection) -> None:
+    """No permite borrar la última empresa ni una con cotizaciones o facturas."""
+    if conn.execute("SELECT COUNT(*) AS n FROM empresas").fetchone()["n"] <= 1:
+        raise ValueError("Debe existir al menos una empresa.")
+    usos = conn.execute(
+        "SELECT (SELECT COUNT(*) FROM cotizaciones WHERE empresa_id = ?) + "
+        "(SELECT COUNT(*) FROM facturas WHERE empresa_id = ?) AS n", (empresa_id, empresa_id)).fetchone()["n"]
+    if usos:
+        raise ValueError(f"No se puede eliminar: tiene {usos} cotización(es)/factura(s) asociadas.")
+    era_predeterminada = conn.execute("SELECT predeterminada FROM empresas WHERE id = ?", (empresa_id,)).fetchone()
+    conn.execute("DELETE FROM empresas WHERE id = ?", (empresa_id,))
+    if era_predeterminada and era_predeterminada["predeterminada"]:
+        conn.execute("UPDATE empresas SET predeterminada = 1 WHERE id = (SELECT MIN(id) FROM empresas)")
+    conn.commit()
 
 
 TRANSICIONES_COTIZACION = {
@@ -167,10 +366,10 @@ def generar_factura(cotizacion_id: int, conn: sqlite3.Connection) -> str:
         raise ValueError(f"Esta cotización ya tiene la factura {existente['numero']}.")
     numero = next_numero("FAC", "facturas", conn)
     conn.execute(
-        "INSERT INTO facturas (numero, cotizacion_id, cliente_id, fecha, estado_pago, total, notas) "
-        "VALUES (?, ?, ?, ?, 'pendiente', ?, ?)",
+        "INSERT INTO facturas (numero, cotizacion_id, cliente_id, fecha, estado_pago, total, notas, empresa_id) "
+        "VALUES (?, ?, ?, ?, 'pendiente', ?, ?, ?)",
         (numero, cotizacion_id, cot["cliente_id"], date.today().isoformat(), cot["total"],
-         cot["notas"] or ""),
+         cot["notas"] or "", cot["empresa_id"]),
     )
     conn.commit()
     return numero
@@ -227,10 +426,6 @@ OBSERVACIONES
 # Valores por defecto de la configuración (clave -> valor)
 CONFIG_DEFECTOS = {
     "mostrar_estado_pdf": "0",
-    "itbms_tasa": "7",
-    "empresa_nombre": "INTEGRO SA",
-    "empresa_subtitulo": "INGENIERIA ESTRUCTURAL",
-    "empresa_correo": "",
 }
 
 
@@ -278,14 +473,6 @@ def obtener_opcion(clave: str, conn: sqlite3.Connection) -> str:
 
 def mostrar_estado_pdf(conn: sqlite3.Connection) -> bool:
     return obtener_opcion("mostrar_estado_pdf", conn) == "1"
-
-
-def obtener_tasa_itbms(conn: sqlite3.Connection) -> float:
-    """Tasa de ITBMS como fracción (0.07). 0 = exento."""
-    try:
-        return max(0.0, float(obtener_opcion("itbms_tasa", conn).replace(",", "."))) / 100
-    except ValueError:
-        return ITBMS_RATE
 
 
 def obtener_proyecto(cotizacion_id: int, conn: sqlite3.Connection) -> str:

@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import db
+from app import calculo, db
 
 PROYECTO = "Torres Curio A y B"
 CLIENTE = "Anel"
@@ -37,14 +37,11 @@ def crear_ejemplo(conn):
         cliente_id = conn.execute("INSERT INTO clientes (nombre) VALUES (?)", (CLIENTE,)).lastrowid
     numero = db.next_numero("COT", "cotizaciones", conn)
     cot_id = conn.execute(
-        "INSERT INTO cotizaciones (numero, cliente_id, fecha, proyecto) VALUES (?, ?, ?, ?)",
-        (numero, cliente_id, date.today().isoformat(), PROYECTO),
+        "INSERT INTO cotizaciones (numero, cliente_id, fecha, proyecto, empresa_id) VALUES (?, ?, ?, ?, ?)",
+        (numero, cliente_id, date.today().isoformat(), PROYECTO, db.empresa_predeterminada_id(conn)),
     ).lastrowid
     conn.commit()
-    db.guardar_items(cot_id, ITEMS, conn)
-    subtotal, _itbms, _total = db.calcular_totales(ITEMS, 0)  # exento de ITBMS
-    conn.execute("UPDATE cotizaciones SET subtotal = ?, itbms = 0, total = ? WHERE id = ?",
-                 (subtotal, subtotal, cot_id))
+    db.guardar_cotizacion(cot_id, calculo.desde_tuplas(ITEMS), [], conn, tasa=0)  # exento de ITBMS
     db.guardar_notas(cot_id, db.obtener_plantilla_notas(conn), conn)
     return numero
 

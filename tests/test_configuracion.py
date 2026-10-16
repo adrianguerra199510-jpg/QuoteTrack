@@ -25,11 +25,12 @@ def test_plantilla_persiste_y_se_restaura(conn):
 
 def test_opciones_por_defecto(conn):
     assert db.mostrar_estado_pdf(conn) is False
-    assert db.obtener_tasa_itbms(conn) == 0.07
+    assert db.obtener_empresa(db.empresa_predeterminada_id(conn), conn)["itbms_tasa"] == 7
 
 
-def test_itbms_exento_se_aplica_al_guardar_items(conn):
-    db.guardar_config("itbms_tasa", "0", conn)
+def test_itbms_exento_de_la_empresa_se_aplica_al_guardar_items(conn):
+    eid = db.guardar_empresa({"nombre": "Exenta SA", "itbms_tasa": 0}, conn)
+    db.cambiar_empresa_cotizacion(1, eid, conn)
     sub, itbms, total = db.guardar_items(1, [("x", 1, 23551.60), ("y", 1, 9420.64)], conn)
     assert (sub, itbms, total) == (32972.24, 0, 32972.24)
 
@@ -51,11 +52,10 @@ def test_ui_configuracion_guarda_y_restaura(conn, qapp, monkeypatch):
     tab = ui_main.ConfiguracionTab()
     assert not tab.chk_estado.isChecked()
     tab.chk_estado.setChecked(True)
-    tab.itbms_tasa.setText("0")
     tab.plantilla_edit.setPlainText("Mi plantilla")
     tab.guardar_opciones()
     tab.guardar_plantilla()
-    assert db.mostrar_estado_pdf(conn) and db.obtener_tasa_itbms(conn) == 0
+    assert db.mostrar_estado_pdf(conn)
     assert db.obtener_plantilla_notas(conn) == "Mi plantilla"
     tab.restaurar_plantilla()
     assert db.obtener_plantilla_notas(conn) == db.PLANTILLA_NOTAS_INICIAL

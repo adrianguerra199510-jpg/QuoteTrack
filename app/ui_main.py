@@ -1,90 +1,63 @@
-"""
-Ventana principal de QuoteTrack: pestañas de Clientes, Cotizaciones y Facturas.
-Esto es un scaffold funcional mínimo — pensado para que Claude Code lo siga
-desarrollando (edición de items, exportar PDF, conversión cotización -> factura, etc).
-"""
+"""Ventana principal de QuoteTrack: navegación lateral con Cotizaciones, Facturas, Clientes, Empresas y Configuración."""
 import sys
-from datetime import date
 
+from PySide6.QtCore import QSize, Qt, QDate
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
-    QTableWidget, QTableWidgetItem, QPushButton, QLineEdit, QLabel, QFormLayout,
-    QComboBox, QMessageBox, QDialog, QDialogButtonBox, QHeaderView,
-    QDateEdit, QFileDialog, QPlainTextEdit, QCheckBox,
-    QStyledItemDelegate
+    QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
+    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QStackedWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import Qt, QDate
-from PySide6.QtGui import QColor
 
-from app import db, pdf
+from app import db, estilo, iconos, pdf
+from app.recursos import ruta_recurso
+from app.ui_comun import (  # noqa: F401  (se reexportan para compatibilidad)
+    DescripcionDelegate, FiltroBar, boton, celda_dinero, celda_estado, encabezado_pagina, exportar_pdf, pagina,
+    parsear_numero, tabla_estandar,
+)
+from app.ui_empresas import EmpresasTab
+from app.ui_items import ItemsDialog  # noqa: F401
 
-
-def exportar_pdf(parent, funcion, registro_id, numero, **opciones):
-    """Pide la ruta de destino y exporta con `funcion` (pdf.exportar_*)."""
-    ruta, _ = QFileDialog.getSaveFileName(parent, "Exportar PDF", f"{numero}.pdf", "PDF (*.pdf)")
-    if not ruta:
-        return
-    try:
-        funcion(registro_id, ruta, **opciones)
-    except (ValueError, OSError) as e:
-        QMessageBox.warning(parent, "Exportar PDF", f"No se pudo exportar el PDF:\n{e}")
-        return
-    QMessageBox.information(parent, "Exportar PDF", f"PDF guardado en:\n{ruta}")
+COT_ESTADO = 5   # columna «Estado» de la tabla de cotizaciones
+FAC_ESTADO = 4   # columna «Estado de pago» de la tabla de facturas
 
 
-class FiltroBar(QHBoxLayout):
-    """Barra de búsqueda (cliente o número) + filtro por estado; llama a `al_cambiar` al modificarse."""
-
-    def __init__(self, estados, al_cambiar):
-        super().__init__()
-        self.busqueda = QLineEdit()
-        self.busqueda.setPlaceholderText("Buscar por cliente o número…")
-        self.busqueda.setClearButtonEnabled(True)
-        self.estado = QComboBox()
-        self.estado.addItem("Todos los estados", None)
-        for e in estados:
-            self.estado.addItem(e, e)
-        self.addWidget(self.busqueda, 1)
-        self.addWidget(QLabel("Estado:"))
-        self.addWidget(self.estado)
-        self.busqueda.textChanged.connect(lambda *_: al_cambiar())
-        self.estado.currentIndexChanged.connect(lambda *_: al_cambiar())
-
-    def clausula(self, alias, columna_estado):
-        """Devuelve (SQL 'WHERE ...', parámetros); `alias` es el de la tabla principal."""
-        condiciones, params = [], []
-        texto = self.busqueda.text().strip()
-        if texto:
-            condiciones.append(f"(cl.nombre LIKE ? OR {alias}.numero LIKE ?)")
-            params += [f"%{texto}%"] * 2
-        if self.estado.currentData():
-            condiciones.append(f"{alias}.{columna_estado} = ?")
-            params.append(self.estado.currentData())
-        return ("WHERE " + " AND ".join(condiciones) if condiciones else ""), params
+def tarjeta() -> QFrame:
+    f = QFrame()
+    f.setObjectName("tarjeta")
+    f.setStyleSheet(f"QFrame#tarjeta {{ background: white; border: 1px solid {estilo.BORDE}; border-radius: 12px; }}")
+    return f
 
 
 class ClientesTab(QWidget):
     def __init__(self):
         super().__init__()
-        layout = QVBoxLayout(self)
+        lay = pagina(self)
+        lay.addWidget(encabezado_pagina("Clientes", "Catálogo de clientes para tus cotizaciones y facturas."))
 
+        card = tarjeta()
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(16, 14, 16, 14)
         form = QFormLayout()
+        form.setVerticalSpacing(8)
         self.nombre_edit = QLineEdit()
         self.id_edit = QLineEdit()
         self.contacto_edit = QLineEdit()
         form.addRow("Nombre:", self.nombre_edit)
         form.addRow("Identificación (RUC/Cédula):", self.id_edit)
         form.addRow("Contacto:", self.contacto_edit)
-        layout.addLayout(form)
-
-        btn_add = QPushButton("Agregar cliente")
+        cl.addLayout(form)
+        btn_add = boton("Agregar cliente", "plus", "primario")
         btn_add.clicked.connect(self.agregar_cliente)
-        layout.addWidget(btn_add)
+        fila = QHBoxLayout()
+        fila.addStretch()
+        fila.addWidget(btn_add)
+        cl.addLayout(fila)
+        lay.addWidget(card)
 
-        self.tabla = QTableWidget(0, 3)
-        self.tabla.setHorizontalHeaderLabels(["ID", "Nombre", "Identificación"])
-        layout.addWidget(self.tabla)
-
+        self.tabla = tabla_estandar(["ID", "Nombre", "Identificación"], estirar=1)
+        self.tabla.setColumnWidth(0, 60)
+        lay.addWidget(self.tabla, 1)
         self.refrescar()
 
     def agregar_cliente(self):
@@ -115,277 +88,55 @@ class ClientesTab(QWidget):
             self.tabla.setItem(i, 2, QTableWidgetItem(fila["identificacion"] or ""))
 
 
-class DescripcionDelegate(QStyledItemDelegate):
-    """Editor multilínea para la descripción de un ítem (Enter = salto de línea)."""
-
-    def createEditor(self, parent, option, index):
-        editor = QPlainTextEdit(parent)
-        editor.setMinimumHeight(70)
-        return editor
-
-    def setEditorData(self, editor, index):
-        editor.setPlainText(index.data(Qt.EditRole) or "")
-
-    def setModelData(self, editor, model, index):
-        model.setData(index, editor.toPlainText().strip(), Qt.EditRole)
-
-    def updateEditorGeometry(self, editor, option, index):
-        editor.setGeometry(option.rect.x(), option.rect.y(), option.rect.width(),
-                           max(option.rect.height(), 80))
-
-
-def parsear_numero(texto):
-    """Acepta '23,551.60', '23551.60' y '23551,60'. Devuelve None si no es un número."""
-    t = (texto or "").strip().replace(" ", "").replace("B/.", "")
-    if not t:
-        return 0.0
-    if "," in t and "." in t:
-        t = t.replace(",", "")
-    elif "," in t:
-        entero, _, dec = t.rpartition(",")
-        t = t.replace(",", "") if len(dec) == 3 else f"{entero}.{dec}".replace(",", "")
-    try:
-        return float(t)
-    except ValueError:
-        return None
-
-
-class ItemsDialog(QDialog):
-    """Editor de líneas de una cotización: tabla editable con totales automáticos."""
-    COLS = ["Descripción", "Cantidad", "Precio unitario", "Importe"]
-
-    def __init__(self, cotizacion_id, numero, editable, parent=None):
-        super().__init__(parent)
-        self.cotizacion_id = cotizacion_id
-        self.editable = editable
-        self._cargando = False
-        self.setWindowTitle(f"Items de {numero}")
-        self.resize(760, 700)
-        layout = QVBoxLayout(self)
-
-        fila_proyecto = QHBoxLayout()
-        fila_proyecto.addWidget(QLabel("Proyecto:"))
-        self.proyecto_edit = QLineEdit()
-        fila_proyecto.addWidget(self.proyecto_edit)
-        layout.addLayout(fila_proyecto)
-
-        self.tabla = QTableWidget(0, 4)
-        self.tabla.setHorizontalHeaderLabels(self.COLS)
-        self.tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.tabla.setItemDelegateForColumn(0, DescripcionDelegate(self.tabla))
-        self.tabla.setWordWrap(True)
-        self.tabla.itemChanged.connect(self._al_editar)
-        layout.addWidget(self.tabla)
-
-        botones = QHBoxLayout()
-        self.btn_agregar = QPushButton("Agregar línea")
-        self.btn_quitar = QPushButton("Quitar línea")
-        self.btn_agregar.clicked.connect(lambda: self.agregar_fila())
-        self.btn_quitar.clicked.connect(self.quitar_fila)
-        botones.addWidget(self.btn_agregar)
-        botones.addWidget(self.btn_quitar)
-        botones.addStretch()
-        layout.addLayout(botones)
-
-        self.lbl_totales = QLabel()
-        self.lbl_totales.setAlignment(Qt.AlignRight)
-        layout.addWidget(self.lbl_totales)
-
-        fila_notas = QHBoxLayout()
-        fila_notas.addWidget(QLabel("Notas / Términos y condiciones:"))
-        fila_notas.addStretch()
-        self.btn_plantilla = QPushButton("Insertar plantilla")
-        self.btn_plantilla.clicked.connect(self.insertar_plantilla)
-        fila_notas.addWidget(self.btn_plantilla)
-        layout.addLayout(fila_notas)
-        self.notas_edit = QPlainTextEdit()
-        self.notas_edit.setPlaceholderText("Alcance, exclusiones y condiciones que saldrán en el PDF…")
-        self.notas_edit.setMinimumHeight(self.notas_edit.fontMetrics().lineSpacing() * 6 + 20)
-        layout.addWidget(self.notas_edit)
-
-        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Save).setText("Guardar")
-        bb.button(QDialogButtonBox.Cancel).setText("Cancelar")
-        bb.accepted.connect(self.guardar)
-        bb.rejected.connect(self.reject)
-        layout.addWidget(bb)
-
-        if not editable:
-            self.btn_agregar.setEnabled(False)
-            self.btn_quitar.setEnabled(False)
-            self.btn_plantilla.setEnabled(False)
-            self.notas_edit.setReadOnly(True)
-            self.proyecto_edit.setReadOnly(True)
-            self.tabla.setEditTriggers(QTableWidget.NoEditTriggers)
-            bb.button(QDialogButtonBox.Save).setEnabled(False)
-            self.setWindowTitle(f"Items de {numero} (solo lectura)")
-
-        conn = db.get_connection()
-        items = db.obtener_items(cotizacion_id, conn)
-        self.notas_edit.setPlainText(db.obtener_notas(cotizacion_id, conn))
-        self.proyecto_edit.setText(db.obtener_proyecto(cotizacion_id, conn))
-        self.tasa = db.obtener_tasa_itbms(conn)
-        conn.close()
-        for desc, cant, precio in items:
-            self.agregar_fila(desc, cant, precio)
-        if editable and not items:
-            self.agregar_fila()
-        self._actualizar_totales()
-
-    def agregar_fila(self, desc="", cant=1.0, precio=0.0):
-        self._cargando = True
-        r = self.tabla.rowCount()
-        self.tabla.insertRow(r)
-        self.tabla.setItem(r, 0, QTableWidgetItem(desc))
-        self.tabla.setItem(r, 1, QTableWidgetItem(f"{cant:g}"))
-        self.tabla.setItem(r, 2, QTableWidgetItem(f"{precio:,.2f}"))
-        importe = QTableWidgetItem(f"{cant * precio:,.2f}")
-        importe.setFlags(importe.flags() & ~Qt.ItemIsEditable)
-        self.tabla.setItem(r, 3, importe)
-        self._cargando = False
-        self.tabla.resizeRowToContents(r)
-        self._actualizar_totales()
-
-    def quitar_fila(self):
-        filas = sorted({i.row() for i in self.tabla.selectedIndexes()}, reverse=True)
-        if not filas and self.tabla.rowCount():
-            filas = [self.tabla.rowCount() - 1]
-        for r in filas:
-            self.tabla.removeRow(r)
-        self._actualizar_totales()
-
-    @staticmethod
-    def _numero(item, defecto=0.0):
-        return parsear_numero(item.text()) if item else defecto
-
-    def _al_editar(self, item):
-        if self._cargando or item.column() == 3:
-            return
-        if item.column() == 0:
-            self.tabla.resizeRowToContents(item.row())
-        self._actualizar_totales()
-
-    def _leer_items(self):
-        """Devuelve (items, error). Ignora filas totalmente vacías."""
-        items = []
-        for r in range(self.tabla.rowCount()):
-            desc_it = self.tabla.item(r, 0)
-            desc = desc_it.text().strip() if desc_it else ""
-            cant = self._numero(self.tabla.item(r, 1))
-            precio = self._numero(self.tabla.item(r, 2))
-            if cant is None or precio is None:
-                return None, f"Fila {r + 1}: cantidad o precio no es un número válido."
-            if not desc and cant == 0 and precio == 0:
-                continue
-            if not desc:
-                return None, f"Fila {r + 1}: falta la descripción."
-            items.append((desc, cant, precio))
-        return items, None
-
-    def _actualizar_totales(self):
-        self._cargando = True
-        validos = []
-        for r in range(self.tabla.rowCount()):
-            cant = self._numero(self.tabla.item(r, 1))
-            precio = self._numero(self.tabla.item(r, 2))
-            importe = self.tabla.item(r, 3)
-            if cant is None or precio is None:
-                if importe:
-                    importe.setText("—")
-                continue
-            if importe:
-                importe.setText(f"{cant * precio:,.2f}")
-            validos.append(("", cant, precio))
-        self._cargando = False
-        sub, itbms, total = db.calcular_totales(validos, self.tasa)
-        self.lbl_totales.setText(
-            f"Subtotal: B/. {sub:,.2f}    "
-            f"{'ITBMS (exento)' if self.tasa == 0 else f'ITBMS ({self.tasa:.0%})'}: B/. {itbms:,.2f}    "
-            f"<b>Total: B/. {total:,.2f}</b>"
-        )
-
-    def insertar_plantilla(self):
-        """Inserta la plantilla por defecto en la posición del cursor."""
-        conn = db.get_connection()
-        plantilla = db.obtener_plantilla_notas(conn)
-        conn.close()
-        if self.notas_edit.toPlainText().strip():
-            caja = QMessageBox(self)
-            caja.setWindowTitle("Insertar plantilla")
-            caja.setText("El cuadro ya tiene texto. ¿Qué deseas hacer con la plantilla?")
-            btn_reemplazar = caja.addButton("Reemplazar", QMessageBox.DestructiveRole)
-            btn_agregar = caja.addButton("Agregar al final", QMessageBox.AcceptRole)
-            caja.addButton("Cancelar", QMessageBox.RejectRole)
-            caja.exec()
-            if caja.clickedButton() == btn_reemplazar:
-                self.notas_edit.setPlainText(plantilla)
-            elif caja.clickedButton() == btn_agregar:
-                self.notas_edit.setPlainText(self.notas_edit.toPlainText().rstrip() + "\n\n" + plantilla)
-            else:
-                return
-        else:
-            self.notas_edit.setPlainText(plantilla)
-        self.notas_edit.setFocus()
-
-    def guardar(self):
-        items, error = self._leer_items()
-        if error:
-            QMessageBox.warning(self, "Datos inválidos", error)
-            return
-        conn = db.get_connection()
-        db.guardar_items(self.cotizacion_id, items, conn)
-        db.guardar_notas(self.cotizacion_id, self.notas_edit.toPlainText().strip("\n"), conn)
-        db.guardar_proyecto(self.cotizacion_id, self.proyecto_edit.text().strip(), conn)
-        conn.close()
-        self.accept()
-
-
 class CotizacionesTab(QWidget):
     def __init__(self, on_factura_generada=None):
         super().__init__()
         self.on_factura_generada = on_factura_generada
-        layout = QVBoxLayout(self)
+        lay = pagina(self)
+        lay.addWidget(encabezado_pagina("Cotizaciones", "Crea, envía y da seguimiento a tus cotizaciones."))
 
         top = QHBoxLayout()
         self.cliente_combo = QComboBox()
-        btn_nueva = QPushButton("Nueva cotización")
-        btn_nueva.clicked.connect(self.nueva_cotizacion)
+        self.cliente_combo.setMinimumWidth(220)
+        self.empresa_combo = QComboBox()
+        self.empresa_combo.setMinimumWidth(200)
+        self.btn_nueva = boton("Nueva cotización", "file-plus", "primario")
+        self.btn_nueva.clicked.connect(self.nueva_cotizacion)
         top.addWidget(QLabel("Cliente:"))
         top.addWidget(self.cliente_combo)
-        top.addWidget(btn_nueva)
+        top.addWidget(QLabel("Empresa:"))
+        top.addWidget(self.empresa_combo)
         top.addStretch()
-        layout.addLayout(top)
+        top.addWidget(self.btn_nueva)
+        lay.addLayout(top)
 
         self.filtro = FiltroBar(list(db.TRANSICIONES_COTIZACION), lambda: self.refrescar())
-        layout.addLayout(self.filtro)
+        lay.addLayout(self.filtro)
 
-        self.tabla = QTableWidget(0, 5)
-        self.tabla.setHorizontalHeaderLabels(["Número", "Cliente", "Fecha", "Estado", "Total"])
-        self.tabla.setSelectionBehavior(QTableWidget.SelectRows)
-        self.tabla.setSelectionMode(QTableWidget.SingleSelection)
-        self.tabla.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabla = tabla_estandar(["Número", "Cliente", "Proyecto", "Empresa", "Fecha", "Estado", "Total"], estirar=1)
         self.tabla.cellDoubleClicked.connect(lambda *_: self.editar_items())
         self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
-        layout.addWidget(self.tabla)
+        lay.addWidget(self.tabla, 1)
 
         acciones = QHBoxLayout()
-        btn_items = QPushButton("Editar items")
-        btn_items.clicked.connect(self.editar_items)
-        acciones.addWidget(btn_items)
+        self.btn_items = boton("Abrir / Editar", "edit")
+        self.btn_items.clicked.connect(self.editar_items)
+        acciones.addWidget(self.btn_items)
         acciones.addStretch()
         acciones.addWidget(QLabel("Cambiar estado a:"))
         self.estado_combo = QComboBox()
+        self.estado_combo.setMinimumWidth(120)
         acciones.addWidget(self.estado_combo)
-        self.btn_estado = QPushButton("Aplicar")
+        self.btn_estado = boton("Aplicar", "check")
         self.btn_estado.clicked.connect(self.cambiar_estado)
         acciones.addWidget(self.btn_estado)
-        self.btn_factura = QPushButton("Generar factura")
+        self.btn_factura = boton("Generar factura", "receipt")
         self.btn_factura.clicked.connect(self.generar_factura)
         acciones.addWidget(self.btn_factura)
-        btn_pdf = QPushButton("Exportar PDF")
-        btn_pdf.clicked.connect(self.exportar_pdf)
-        acciones.addWidget(btn_pdf)
-        layout.addLayout(acciones)
+        self.btn_pdf = boton("Exportar PDF", "download")
+        self.btn_pdf.clicked.connect(self.exportar_pdf)
+        acciones.addWidget(self.btn_pdf)
+        lay.addLayout(acciones)
 
         self.refrescar()
 
@@ -400,10 +151,19 @@ class CotizacionesTab(QWidget):
         if idx >= 0:
             self.cliente_combo.setCurrentIndex(idx)
 
+        empresa_actual = self.empresa_combo.currentData() or db.empresa_predeterminada_id(conn)
+        self.empresa_combo.clear()
+        for e in db.listar_empresas(conn):
+            self.empresa_combo.addItem(e["nombre"], e["id"])
+        idx = self.empresa_combo.findData(empresa_actual)
+        if idx >= 0:
+            self.empresa_combo.setCurrentIndex(idx)
+
         where, params = self.filtro.clausula("c", "estado")
         filas = conn.execute(f"""
-            SELECT c.id, c.numero, cl.nombre AS cliente, c.fecha, c.estado, c.total
+            SELECT c.id, c.numero, cl.nombre AS cliente, c.proyecto, e.nombre AS empresa, c.fecha, c.estado, c.total
             FROM cotizaciones c JOIN clientes cl ON cl.id = c.cliente_id
+            LEFT JOIN empresas e ON e.id = c.empresa_id
             {where}
             ORDER BY c.id DESC
         """, params).fetchall()
@@ -415,9 +175,11 @@ class CotizacionesTab(QWidget):
             num.setData(Qt.UserRole, fila["id"])
             self.tabla.setItem(i, 0, num)
             self.tabla.setItem(i, 1, QTableWidgetItem(fila["cliente"]))
-            self.tabla.setItem(i, 2, QTableWidgetItem(fila["fecha"]))
-            self.tabla.setItem(i, 3, QTableWidgetItem(fila["estado"]))
-            self.tabla.setItem(i, 4, QTableWidgetItem(f"{fila['total']:.2f}"))
+            self.tabla.setItem(i, 2, QTableWidgetItem(fila["proyecto"] or ""))
+            self.tabla.setItem(i, 3, QTableWidgetItem(fila["empresa"] or ""))
+            self.tabla.setItem(i, 4, QTableWidgetItem(fila["fecha"]))
+            self.tabla.setItem(i, COT_ESTADO, celda_estado(fila["estado"]))
+            self.tabla.setItem(i, 6, celda_dinero(fila["total"]))
             if fila["id"] == sel_id:
                 self.tabla.setCurrentCell(i, 0)
         self._actualizar_acciones()
@@ -427,14 +189,22 @@ class CotizacionesTab(QWidget):
         item = self.tabla.item(fila, 0) if fila >= 0 else None
         return item.data(Qt.UserRole) if item else None
 
+    def _estado_actual(self):
+        fila = self.tabla.currentRow()
+        return self.tabla.item(fila, COT_ESTADO).text() if fila >= 0 else None
+
     def _actualizar_acciones(self):
         """Llena el combo con los estados a los que se puede pasar desde el actual."""
         self.estado_combo.clear()
-        fila = self.tabla.currentRow()
-        if fila >= 0:
-            self.estado_combo.addItems(db.TRANSICIONES_COTIZACION.get(self.tabla.item(fila, 3).text(), []))
+        estado = self._estado_actual()
+        if estado:
+            self.estado_combo.addItems(db.TRANSICIONES_COTIZACION.get(estado, []))
         self.btn_estado.setEnabled(self.estado_combo.count() > 0)
-        self.btn_factura.setEnabled(fila >= 0 and self.tabla.item(fila, 3).text() == "aprobada")
+        self.estado_combo.setEnabled(self.estado_combo.count() > 0)
+        self.btn_factura.setEnabled(estado == "aprobada")
+        self.btn_items.setEnabled(estado is not None)
+        self.btn_pdf.setEnabled(estado is not None)
+        self.btn_items.setText("Abrir / Editar" if estado == "borrador" or estado is None else "Ver detalle")
 
     def cambiar_estado(self):
         sel = self._seleccionada()
@@ -477,7 +247,7 @@ class CotizacionesTab(QWidget):
             QMessageBox.information(self, "Selecciona una cotización", "Selecciona una cotización de la tabla.")
             return None
         item = self.tabla.item(fila, 0)
-        return item.data(Qt.UserRole), item.text(), self.tabla.item(fila, 3).text()
+        return item.data(Qt.UserRole), item.text(), self.tabla.item(fila, COT_ESTADO).text()
 
     def editar_items(self):
         sel = self._seleccionada()
@@ -491,59 +261,78 @@ class CotizacionesTab(QWidget):
     def nueva_cotizacion(self):
         cliente_id = self.cliente_combo.currentData()
         if cliente_id is None:
-            QMessageBox.warning(self, "Falta cliente", "Agrega un cliente primero en la pestaña Clientes.")
+            QMessageBox.warning(self, "Falta cliente", "Agrega un cliente primero en la sección Clientes.")
             return
         conn = db.get_connection()
-        numero = db.next_numero("COT", "cotizaciones", conn)
-        conn.execute(
-            "INSERT INTO cotizaciones (numero, cliente_id, fecha, estado) VALUES (?, ?, ?, 'borrador')",
-            (numero, cliente_id, date.today().isoformat()),
-        )
-        conn.commit()
+        db.crear_cotizacion(cliente_id, conn, self.empresa_combo.currentData())
         conn.close()
         self.refrescar()
+        self.tabla.setCurrentCell(0, 0)
+
+
+class NotasDialog(QDialog):
+    """Cuadro de texto multilínea con Guardar / Cancelar."""
+
+    def __init__(self, titulo, texto, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(titulo)
+        self.resize(640, 480)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 16, 18, 14)
+        self.editor = QPlainTextEdit(texto)
+        lay.addWidget(self.editor)
+        fila = QHBoxLayout()
+        fila.addStretch()
+        cancelar = boton("Cancelar", "x")
+        guardar = boton("Guardar", "save", "primario")
+        cancelar.clicked.connect(self.reject)
+        guardar.clicked.connect(self.accept)
+        fila.addWidget(cancelar)
+        fila.addWidget(guardar)
+        lay.addLayout(fila)
+
+    def texto(self):
+        return self.editor.toPlainText().strip("\n")
 
 
 class FacturasTab(QWidget):
-    COLOR_VENCIDA = QColor(255, 205, 205)
-    COLOR_PAGADA = QColor(215, 245, 215)
+    COLOR_FILA_VENCIDA = "#FEF2F2"
 
     def __init__(self):
         super().__init__()
-        layout = QVBoxLayout(self)
+        lay = pagina(self)
+        lay.addWidget(encabezado_pagina("Facturas", "Seguimiento de cobros: pendientes, pagadas y vencidas."))
         self.filtro = FiltroBar(["pendiente", "pagada", "vencida"], lambda: self.refrescar())
-        layout.addLayout(self.filtro)
-        self.tabla = QTableWidget(0, 6)
-        self.tabla.setHorizontalHeaderLabels(
-            ["Número", "Cliente", "Fecha", "Estado de pago", "Fecha de pago", "Total"])
-        self.tabla.setSelectionBehavior(QTableWidget.SelectRows)
-        self.tabla.setSelectionMode(QTableWidget.SingleSelection)
-        self.tabla.setEditTriggers(QTableWidget.NoEditTriggers)
-        layout.addWidget(self.tabla)
+        lay.addLayout(self.filtro)
+        self.tabla = tabla_estandar(
+            ["Número", "Cliente", "Empresa", "Fecha", "Estado de pago", "Fecha de pago", "Total"], estirar=1)
+        self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
+        lay.addWidget(self.tabla, 1)
 
         acciones = QHBoxLayout()
-        self.btn_pagada = QPushButton("Marcar como pagada")
-        self.btn_vencida = QPushButton("Marcar como vencida")
+        self.btn_pagada = boton("Marcar como pagada", "check-circle")
+        self.btn_vencida = boton("Marcar como vencida", "clock", "peligro")
         self.btn_pagada.clicked.connect(self.marcar_pagada)
         self.btn_vencida.clicked.connect(self.marcar_vencida)
         acciones.addWidget(self.btn_pagada)
         acciones.addWidget(self.btn_vencida)
-        btn_notas = QPushButton("Editar notas")
-        btn_notas.clicked.connect(self.editar_notas)
-        acciones.addWidget(btn_notas)
-        btn_pdf = QPushButton("Exportar PDF")
-        btn_pdf.clicked.connect(self.exportar_pdf)
-        acciones.addWidget(btn_pdf)
         acciones.addStretch()
-        layout.addLayout(acciones)
-        self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
+        self.btn_notas = boton("Editar notas", "edit")
+        self.btn_notas.clicked.connect(self.editar_notas)
+        self.btn_pdf = boton("Exportar PDF", "download")
+        self.btn_pdf.clicked.connect(self.exportar_pdf)
+        acciones.addWidget(self.btn_notas)
+        acciones.addWidget(self.btn_pdf)
+        lay.addLayout(acciones)
         self.refrescar()
 
     def _actualizar_acciones(self):
         fila = self.tabla.currentRow()
-        estado = self.tabla.item(fila, 3).text() if fila >= 0 else None
+        estado = self.tabla.item(fila, FAC_ESTADO).text() if fila >= 0 else None
         self.btn_pagada.setEnabled(estado in ("pendiente", "vencida"))
         self.btn_vencida.setEnabled(estado == "pendiente")
+        self.btn_notas.setEnabled(estado is not None)
+        self.btn_pdf.setEnabled(estado is not None)
 
     def _id_seleccionado(self):
         fila = self.tabla.currentRow()
@@ -551,11 +340,14 @@ class FacturasTab(QWidget):
         return item.data(Qt.UserRole) if item else None
 
     def refrescar(self):
+        from PySide6.QtGui import QBrush, QColor
         conn = db.get_connection()
         where, params = self.filtro.clausula("f", "estado_pago")
         filas = conn.execute(f"""
-            SELECT f.id, f.numero, cl.nombre AS cliente, f.fecha, f.estado_pago, f.fecha_pago, f.total
+            SELECT f.id, f.numero, cl.nombre AS cliente, e.nombre AS empresa, f.fecha, f.estado_pago,
+                   f.fecha_pago, f.total
             FROM facturas f JOIN clientes cl ON cl.id = f.cliente_id
+            LEFT JOIN empresas e ON e.id = f.empresa_id
             {where}
             ORDER BY f.id DESC
         """, params).fetchall()
@@ -563,15 +355,14 @@ class FacturasTab(QWidget):
         sel_id = self._id_seleccionado()
         self.tabla.setRowCount(len(filas))
         for i, fila in enumerate(filas):
-            valores = [fila["numero"], fila["cliente"], fila["fecha"], fila["estado_pago"],
-                       fila["fecha_pago"] or "", f"{fila['total']:.2f}"]
-            color = {"vencida": self.COLOR_VENCIDA, "pagada": self.COLOR_PAGADA}.get(fila["estado_pago"])
-            for c, v in enumerate(valores):
-                it = QTableWidgetItem(v)
-                if c == 0:
-                    it.setData(Qt.UserRole, fila["id"])
-                if color:
-                    it.setBackground(color)
+            celdas = [QTableWidgetItem(fila["numero"]), QTableWidgetItem(fila["cliente"]),
+                      QTableWidgetItem(fila["empresa"] or ""), QTableWidgetItem(fila["fecha"]),
+                      celda_estado(fila["estado_pago"]), QTableWidgetItem(fila["fecha_pago"] or ""),
+                      celda_dinero(fila["total"])]
+            celdas[0].setData(Qt.UserRole, fila["id"])
+            for c, it in enumerate(celdas):
+                if fila["estado_pago"] == "vencida" and c != FAC_ESTADO:
+                    it.setBackground(QBrush(QColor(self.COLOR_FILA_VENCIDA)))  # fila vencida resaltada
                 self.tabla.setItem(i, c, it)
             if fila["id"] == sel_id:
                 self.tabla.setCurrentCell(i, 0)
@@ -595,6 +386,7 @@ class FacturasTab(QWidget):
         dlg = QDialog(self)
         dlg.setWindowTitle("Fecha de pago")
         form = QFormLayout(dlg)
+        form.setContentsMargins(18, 16, 18, 14)
         fecha = QDateEdit(QDate.currentDate())
         fecha.setCalendarPopup(True)
         fecha.setDisplayFormat("yyyy-MM-dd")
@@ -632,83 +424,52 @@ class FacturasTab(QWidget):
             self._aplicar(db.marcar_factura_vencida, fid)
 
 
-class NotasDialog(QDialog):
-    """Cuadro de texto multilínea con Guardar / Cancelar."""
-
-    def __init__(self, titulo, texto, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(titulo)
-        self.resize(600, 450)
-        lay = QVBoxLayout(self)
-        self.editor = QPlainTextEdit(texto)
-        lay.addWidget(self.editor)
-        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Save).setText("Guardar")
-        bb.button(QDialogButtonBox.Cancel).setText("Cancelar")
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
-
-    def texto(self):
-        return self.editor.toPlainText().strip("\n")
-
-
 class ConfiguracionTab(QWidget):
     def __init__(self):
         super().__init__()
-        layout = QVBoxLayout(self)
+        lay = pagina(self)
+        lay.addWidget(encabezado_pagina("Configuración", "Opciones generales y plantilla de notas."))
 
-        form = QFormLayout()
-        self.empresa_nombre = QLineEdit()
-        self.empresa_subtitulo = QLineEdit()
-        self.empresa_correo = QLineEdit()
-        self.itbms_tasa = QLineEdit()
-        self.itbms_tasa.setToolTip("0 = exento de ITBMS")
-        self.chk_estado = QCheckBox("Mostrar estado en el PDF")
-        form.addRow("Empresa (encabezado del PDF):", self.empresa_nombre)
-        form.addRow("Subtítulo:", self.empresa_subtitulo)
-        form.addRow("Correo:", self.empresa_correo)
-        form.addRow("Tasa de ITBMS (%; 0 = exento):", self.itbms_tasa)
-        form.addRow("", self.chk_estado)
-        layout.addLayout(form)
-
-        btn_guardar = QPushButton("Guardar configuración")
-        btn_guardar.clicked.connect(self.guardar_opciones)
-        layout.addWidget(btn_guardar)
-
-        layout.addWidget(QLabel("<b>Plantilla de notas por defecto</b>"))
-        self.plantilla_edit = QPlainTextEdit()
-        layout.addWidget(self.plantilla_edit, 1)
+        card = tarjeta()
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(16, 14, 16, 14)
+        self.chk_estado = QCheckBox("Mostrar el estado de la cotización / factura en el PDF")
+        cl.addWidget(self.chk_estado)
         fila = QHBoxLayout()
-        btn_plantilla = QPushButton("Guardar plantilla")
-        btn_plantilla.clicked.connect(self.guardar_plantilla)
-        btn_restaurar = QPushButton("Restaurar plantilla original")
-        btn_restaurar.clicked.connect(self.restaurar_plantilla)
-        fila.addWidget(btn_plantilla)
-        fila.addWidget(btn_restaurar)
         fila.addStretch()
-        layout.addLayout(fila)
+        btn_guardar = boton("Guardar configuración", "save", "primario")
+        btn_guardar.clicked.connect(self.guardar_opciones)
+        fila.addWidget(btn_guardar)
+        cl.addLayout(fila)
+        lay.addWidget(card)
+
+        sec = QLabel("Plantilla de notas por defecto")
+        sec.setObjectName("seccion")
+        lay.addWidget(sec)
+        sub = QLabel("Se inserta con el botón «Insertar plantilla» al editar una cotización.")
+        sub.setObjectName("subtitulo")
+        lay.addWidget(sub)
+        self.plantilla_edit = QPlainTextEdit()
+        lay.addWidget(self.plantilla_edit, 1)
+        fila = QHBoxLayout()
+        self.btn_plantilla = boton("Guardar plantilla", "save", "primario")
+        self.btn_plantilla.clicked.connect(self.guardar_plantilla)
+        self.btn_restaurar = boton("Restaurar plantilla original", "refresh")
+        self.btn_restaurar.clicked.connect(self.restaurar_plantilla)
+        fila.addWidget(self.btn_plantilla)
+        fila.addWidget(self.btn_restaurar)
+        fila.addStretch()
+        lay.addLayout(fila)
         self.refrescar()
 
     def refrescar(self):
         conn = db.get_connection()
-        self.empresa_nombre.setText(db.obtener_opcion("empresa_nombre", conn))
-        self.empresa_subtitulo.setText(db.obtener_opcion("empresa_subtitulo", conn))
-        self.empresa_correo.setText(db.obtener_opcion("empresa_correo", conn))
-        self.itbms_tasa.setText(db.obtener_opcion("itbms_tasa", conn))
         self.chk_estado.setChecked(db.mostrar_estado_pdf(conn))
         self.plantilla_edit.setPlainText(db.obtener_plantilla_notas(conn))
         conn.close()
 
     def guardar_opciones(self):
-        if parsear_numero(self.itbms_tasa.text()) is None:
-            QMessageBox.warning(self, "Configuración", "La tasa de ITBMS debe ser un número.")
-            return
         conn = db.get_connection()
-        db.guardar_config("empresa_nombre", self.empresa_nombre.text().strip(), conn)
-        db.guardar_config("empresa_subtitulo", self.empresa_subtitulo.text().strip(), conn)
-        db.guardar_config("empresa_correo", self.empresa_correo.text().strip(), conn)
-        db.guardar_config("itbms_tasa", str(parsear_numero(self.itbms_tasa.text())), conn)
         db.guardar_config("mostrar_estado_pdf", "1" if self.chk_estado.isChecked() else "0", conn)
         conn.close()
         QMessageBox.information(self, "Configuración", "Configuración guardada.")
@@ -733,24 +494,84 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("QuoteTrack — Cotizaciones y Facturas")
-        self.resize(900, 600)
+        self.resize(1180, 740)
+        self.setMinimumSize(980, 620)
 
-        self.clientes_tab = ClientesTab()
         self.facturas_tab = FacturasTab()
         self.cotizaciones_tab = CotizacionesTab(on_factura_generada=self.facturas_tab.refrescar)
-        tabs = QTabWidget()
-        tabs.addTab(self.clientes_tab, "Clientes")
-        tabs.addTab(self.cotizaciones_tab, "Cotizaciones")
-        tabs.addTab(self.facturas_tab, "Facturas")
+        self.clientes_tab = ClientesTab()
+        self.empresas_tab = EmpresasTab()
         self.configuracion_tab = ConfiguracionTab()
-        tabs.addTab(self.configuracion_tab, "Configuración")
-        tabs.currentChanged.connect(lambda i: tabs.widget(i).refrescar())
-        self.setCentralWidget(tabs)
+        secciones = [
+            ("Cotizaciones", "file", self.cotizaciones_tab),
+            ("Facturas", "receipt", self.facturas_tab),
+            ("Clientes", "users", self.clientes_tab),
+            ("Empresas", "building", self.empresas_tab),
+            ("Configuración", "sliders", self.configuracion_tab),
+        ]
+
+        central = QWidget()
+        h = QHBoxLayout(central)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
+
+        lateral = QWidget()
+        lateral.setObjectName("barraLateral")
+        lateral.setFixedWidth(230)
+        lv = QVBoxLayout(lateral)
+        lv.setContentsMargins(0, 18, 0, 14)
+        marca = QHBoxLayout()
+        marca.setContentsMargins(18, 0, 12, 10)
+        logo = QLabel()
+        logo.setPixmap(QPixmap(str(ruta_recurso("assets/icon.png"))).scaled(
+            44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        marca.addWidget(logo)
+        textos = QVBoxLayout()
+        textos.setSpacing(0)
+        n = QLabel("QuoteTrack")
+        n.setObjectName("marca")
+        s = QLabel("Cotizaciones y facturas")
+        s.setObjectName("marcaSub")
+        textos.addWidget(n)
+        textos.addWidget(s)
+        marca.addLayout(textos)
+        marca.addStretch()
+        lv.addLayout(marca)
+
+        self.nav = QListWidget()
+        self.nav.setObjectName("nav")
+        self.nav.setIconSize(QSize(20, 20))
+        self.nav.setFocusPolicy(Qt.NoFocus)
+        self.pila = QStackedWidget()
+        for nombre, icono, widget in secciones:
+            self.nav.addItem(QListWidgetItem(iconos.icono(icono, "#C7D4F2", 20, color_activo="#FFFFFF"), nombre))
+            self.pila.addWidget(widget)
+        self.nav.currentRowChanged.connect(self._cambiar_seccion)
+        lv.addWidget(self.nav, 1)
+        pie = QLabel("v1.1")
+        pie.setObjectName("marcaSub")
+        pie.setContentsMargins(20, 0, 0, 0)
+        lv.addWidget(pie)
+
+        h.addWidget(lateral)
+        h.addWidget(self.pila, 1)
+        self.setCentralWidget(central)
+        self.nav.setCurrentRow(0)
+
+    def _cambiar_seccion(self, fila):
+        if fila < 0:
+            return
+        self.pila.setCurrentIndex(fila)
+        widget = self.pila.widget(fila)
+        if hasattr(widget, "refrescar"):
+            widget.refrescar()
 
 
 def main():
     db.init_db()
     app = QApplication(sys.argv)
+    estilo.aplicar(app)
+    app.setWindowIcon(QIcon(str(ruta_recurso("assets/icon.png"))))
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
