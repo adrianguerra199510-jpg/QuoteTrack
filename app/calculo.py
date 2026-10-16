@@ -130,6 +130,8 @@ class Concepto:
     apu: Apu | None = None
     codigo: str = ""       # identificador dentro de su fuente (p. ej. la página de la base de la Contraloría)
     fuente: str = ""       # vacío = creado por el usuario
+    biblioteca_id: int | None = None    # biblioteca a la que pertenece (None = la predeterminada al guardar)
+    orden: int = 0         # posición dentro de su biblioteca (0 = por categoría y descripción)
 
 
 @dataclass

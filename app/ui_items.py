@@ -2,7 +2,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu,
+    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -552,10 +552,20 @@ class ItemsDialog(QDialog):
             QMessageBox.information(self, "Biblioteca", "Escribe primero la descripción del ítem.")
             return
         conn = db.get_connection()
+        bibliotecas = db.listar_bibliotecas(conn)
+        destino = bibliotecas[0]["id"]
+        if len(bibliotecas) > 1:                       # con varias bibliotecas se pregunta en cuál guardar
+            nombres = [b["nombre"] for b in bibliotecas]
+            elegido, ok = QInputDialog.getItem(self, "Guardar en biblioteca", "Guardar en:", nombres, 0, False)
+            if not ok:
+                conn.close()
+                return
+            destino = bibliotecas[nombres.index(elegido)]["id"]
         guardados = 0
         for l, cat in candidatos:
             concepto = db.concepto_desde_linea(l, cat)
-            existente = db.buscar_concepto(concepto.descripcion, concepto.unidad, conn)
+            concepto.biblioteca_id = destino
+            existente = db.buscar_concepto(concepto.descripcion, concepto.unidad, conn, destino)
             if existente:
                 r = QMessageBox.question(
                     self, "Biblioteca",

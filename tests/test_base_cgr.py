@@ -136,24 +136,37 @@ def test_concepto_importado_se_inserta_en_una_cotizacion(conn):
 
 
 # ----------------------------------------------------------------- interfaz
-def test_boton_importar_base(conn, qapp, monkeypatch):
-    infos = []
-    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a: infos.append(a[2])))
+def test_la_base_se_precarga_una_sola_vez(conn):
+    assert base_cgr.precargar(conn) is True
+    bibliotecas = db.listar_bibliotecas(conn)
+    assert [b["nombre"] for b in bibliotecas] == ["Mi biblioteca", base_cgr.cargar()["fuente"]]
+    assert [b["n"] for b in bibliotecas] == [0, 1169]
+    assert base_cgr.precargar(conn) is False                      # ya precargada: no repite
+    db.eliminar_biblioteca(bibliotecas[1]["id"], conn)             # si el usuario la elimina, no vuelve
+    assert base_cgr.precargar(conn) is False
+    assert [b["nombre"] for b in db.listar_bibliotecas(conn)] == ["Mi biblioteca"]
+
+
+def test_no_precarga_si_ya_estaba_importada(conn):
+    base_cgr.importar(conn)                                        # versión anterior: importada a mano
+    assert base_cgr.precargar(conn) is False
+    assert conn.execute("SELECT COUNT(*) AS n FROM conceptos").fetchone()["n"] == 1169
+
+
+def test_ui_biblioteca_muestra_la_base_precargada(conn, qapp):
+    base_cgr.precargar(conn)
     tab = ui_biblioteca.BibliotecaTab()
-    assert tab.tabla.rowCount() == 0 and "vacía" in tab.lbl_total.text()
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a: QMessageBox.No))
-    tab.importar_base()
-    assert tab.tabla.rowCount() == 0 and not infos                    # cancelar no importa nada
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a: QMessageBox.Yes))
-    tab.importar_base()
-    assert tab.tabla.rowCount() == 1169 and "1,169" in infos[0] and "1,169 de 1,169" in tab.lbl_total.text()
-    assert tab.disciplina.count() == 12                                # «Todas» + 11 disciplinas
+    assert not hasattr(tab, "btn_importar")                        # ya no hay botón de importar
+    assert tab.bib_combo.count() == 2
+    tab.bib_combo.setCurrentIndex(1)
+    assert tab.tabla.rowCount() == 1169 and "1,169 de 1,169" in tab.lbl_total.text()
+    assert tab.disciplina.count() == 12                            # «Todas» + 11 disciplinas
     tab.disciplina.setCurrentIndex(tab.disciplina.findData("PLOMERÍA"))
-    assert 0 < tab.tabla.rowCount() == 61
+    assert tab.tabla.rowCount() == 61
     tab.disciplina.setCurrentIndex(0)
     tab.busqueda.setText("pintura")
     assert 0 < tab.tabla.rowCount() < 1169
-    assert tab.tabla.item(0, 4).text().startswith("B/. ")              # costo directo
+    assert tab.tabla.item(0, 4).text().startswith("B/. ")
 
 
 # ----------------------------------------------------------------- generador (formatos del PDF)

@@ -107,6 +107,12 @@ CREATE TABLE IF NOT EXISTS conceptos (
     apu_base REAL NOT NULL DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS bibliotecas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    descripcion TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS concepto_insumos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     concepto_id INTEGER NOT NULL REFERENCES conceptos(id) ON DELETE CASCADE,
@@ -158,6 +164,23 @@ def _migrar_empresa_inicial(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE facturas SET empresa_id = ? WHERE empresa_id IS NULL", (predeterminada,))
 
 
+BIBLIOTECA_INICIAL = "Mi biblioteca"
+
+
+def _migrar_bibliotecas(conn: sqlite3.Connection) -> None:
+    """Garantiza una biblioteca propia y reparte los conceptos existentes: los creados por el usuario van a «Mi
+    biblioteca» y los importados de una fuente a una biblioteca con el nombre de esa fuente."""
+    if conn.execute("SELECT 1 FROM bibliotecas LIMIT 1").fetchone() is None:
+        conn.execute("INSERT INTO bibliotecas (nombre) VALUES (?)", (BIBLIOTECA_INICIAL,))
+    propia = conn.execute("SELECT MIN(id) AS id FROM bibliotecas").fetchone()["id"]
+    for f in conn.execute("SELECT DISTINCT fuente FROM conceptos WHERE biblioteca_id IS NULL AND fuente <> ''").fetchall():
+        fila = conn.execute("SELECT id FROM bibliotecas WHERE nombre = ?", (f["fuente"],)).fetchone()
+        bid = fila["id"] if fila else conn.execute("INSERT INTO bibliotecas (nombre) VALUES (?)", (f["fuente"],)).lastrowid
+        conn.execute("UPDATE conceptos SET biblioteca_id = ? WHERE biblioteca_id IS NULL AND fuente = ?", (bid, f["fuente"]))
+    conn.execute("UPDATE conceptos SET biblioteca_id = ? WHERE biblioteca_id IS NULL", (propia,))
+    conn.execute("UPDATE conceptos SET orden = CAST(codigo AS INTEGER) WHERE orden = 0 AND codigo <> ''")
+
+
 def init_db() -> None:
     conn = get_connection()
     conn.executescript(SCHEMA)
@@ -187,6 +210,10 @@ def init_db() -> None:
     # Migración: origen de los conceptos de la biblioteca (bases de datos de costos importadas)
     _agregar_columna(conn, "conceptos", "codigo", "TEXT NOT NULL DEFAULT ''")
     _agregar_columna(conn, "conceptos", "fuente", "TEXT NOT NULL DEFAULT ''")
+    # Migración: varias bibliotecas de conceptos
+    _agregar_columna(conn, "conceptos", "biblioteca_id", "INTEGER REFERENCES bibliotecas(id)")
+    _agregar_columna(conn, "conceptos", "orden", "INTEGER NOT NULL DEFAULT 0")
+    _migrar_bibliotecas(conn)
     _migrar_empresa_inicial(conn)
     conn.commit()
     conn.close()
@@ -562,7 +589,7 @@ def _concepto(fila, conn) -> Concepto:
         apu = Apu(fila["apu_base"], _insumos_de(conn.execute(
             "SELECT * FROM concepto_insumos WHERE concepto_id = ? ORDER BY id", (fila["id"],)).fetchall()))
     return Concepto(fila["id"], fila["descripcion"], fila["unidad"], fila["modalidad"], fila["precio"],
-                    fila["categoria"], apu, fila["codigo"], fila["fuente"])
+                    fila["categoria"], apu, fila["codigo"], fila["fuente"], fila["biblioteca_id"], fila["orden"])
 
 
 def guardar_concepto(c: Concepto, conn: sqlite3.Connection) -> int:
@@ -575,15 +602,16 @@ def guardar_concepto(c: Concepto, conn: sqlite3.Connection) -> int:
     base = c.apu.base if c.apu else 1.0
     if base <= 0:
         raise ValueError("La cantidad base del análisis debe ser mayor que cero.")
+    biblioteca = c.biblioteca_id or biblioteca_por_defecto(conn)
     valores = (descripcion, (c.unidad or "").strip(), c.modalidad, 0.0 if c.modalidad == calculo.OBRA else c.precio,
-               (c.categoria or "").strip(), base, c.codigo or "", c.fuente or "")
+               (c.categoria or "").strip(), base, c.codigo or "", c.fuente or "", biblioteca, c.orden or 0)
     if c.id is None:
         cid = conn.execute("INSERT INTO conceptos (descripcion, unidad, modalidad, precio, categoria, apu_base, codigo, "
-                           "fuente) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", valores).lastrowid
+                           "fuente, biblioteca_id, orden) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", valores).lastrowid
     else:
         cid = c.id
         conn.execute("UPDATE conceptos SET descripcion = ?, unidad = ?, modalidad = ?, precio = ?, categoria = ?, "
-                     "apu_base = ?, codigo = ?, fuente = ? WHERE id = ?", (*valores, cid))
+                     "apu_base = ?, codigo = ?, fuente = ?, biblioteca_id = ?, orden = ? WHERE id = ?", (*valores, cid))
     _guardar_insumos(conn, "concepto_insumos", "concepto_id", cid,
                      c.apu.insumos if c.apu and c.modalidad == calculo.OBRA else [])
     conn.commit()
@@ -595,13 +623,14 @@ def obtener_concepto(concepto_id: int, conn: sqlite3.Connection) -> Concepto | N
     return _concepto(fila, conn) if fila else None
 
 
-ORDEN_CONCEPTOS = "ORDER BY (c.fuente <> ''), CAST(c.codigo AS INTEGER), c.categoria, c.descripcion"
+ORDEN_CONCEPTOS = "ORDER BY c.biblioteca_id, (c.orden <> 0), c.orden, c.categoria, c.descripcion"
 
 
 def listar_conceptos(conn: sqlite3.Connection, texto: str = "", modalidad: str | None = None,
-                     disciplina: str | None = None) -> list[Concepto]:
-    """Conceptos de la biblioteca: primero los propios (por categoría), luego los importados en el orden de su fuente.
-    `disciplina` filtra por el primer nivel de la categoría («ALBAÑILERÍA › CONCRETOS» -> «ALBAÑILERÍA»)."""
+                     disciplina: str | None = None, biblioteca_id: int | None = None) -> list[Concepto]:
+    """Conceptos de una biblioteca (o de todas si `biblioteca_id` es None): primero los que no tienen posición fija
+    (por categoría), luego los importados en el orden de su fuente. `disciplina` filtra por el primer nivel de la
+    categoría («ALBAÑILERÍA › CONCRETOS» -> «ALBAÑILERÍA»)."""
     condiciones, params = [], []
     if texto.strip():
         condiciones.append("(c.descripcion LIKE ? OR c.categoria LIKE ?)")
@@ -612,6 +641,9 @@ def listar_conceptos(conn: sqlite3.Connection, texto: str = "", modalidad: str |
     if disciplina:
         condiciones.append("(c.categoria = ? OR c.categoria LIKE ?)")
         params += [disciplina, f"{disciplina} › %"]
+    if biblioteca_id is not None:
+        condiciones.append("c.biblioteca_id = ?")
+        params.append(biblioteca_id)
     where = "WHERE " + " AND ".join(condiciones) if condiciones else ""
     filas = conn.execute(f"SELECT c.* FROM conceptos c {where} {ORDEN_CONCEPTOS}", params).fetchall()
     insumos = {}
@@ -624,33 +656,133 @@ def listar_conceptos(conn: sqlite3.Connection, texto: str = "", modalidad: str |
         if f["modalidad"] == calculo.OBRA:
             apu = Apu(f["apu_base"], _insumos_de(insumos.get(f["id"], [])))
         resultado.append(Concepto(f["id"], f["descripcion"], f["unidad"], f["modalidad"], f["precio"], f["categoria"],
-                                  apu, f["codigo"], f["fuente"]))
+                                  apu, f["codigo"], f["fuente"], f["biblioteca_id"], f["orden"]))
     return resultado
 
 
-def disciplinas_conceptos(conn: sqlite3.Connection) -> list[str]:
-    """Primer nivel de las categorías de la biblioteca, sin repetir (para el filtro)."""
-    cats = {(f["categoria"] or "").split(" › ")[0] for f in conn.execute("SELECT DISTINCT categoria FROM conceptos")}
+def disciplinas_conceptos(conn: sqlite3.Connection, biblioteca_id: int | None = None) -> list[str]:
+    """Primer nivel de las categorías de una biblioteca (o de todas), sin repetir (para el filtro)."""
+    if biblioteca_id is None:
+        filas = conn.execute("SELECT DISTINCT categoria FROM conceptos")
+    else:
+        filas = conn.execute("SELECT DISTINCT categoria FROM conceptos WHERE biblioteca_id = ?", (biblioteca_id,))
+    cats = {(f["categoria"] or "").split(" › ")[0] for f in filas}
     return sorted(c for c in cats if c)
 
 
+# ---------- Bibliotecas (colecciones de conceptos) ----------
+
+def listar_bibliotecas(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Bibliotecas con su número de conceptos (`n`), en el orden en que se crearon."""
+    return conn.execute(
+        "SELECT b.*, (SELECT COUNT(*) FROM conceptos c WHERE c.biblioteca_id = b.id) AS n FROM bibliotecas b ORDER BY b.id"
+    ).fetchall()
+
+
+def biblioteca_por_defecto(conn: sqlite3.Connection) -> int:
+    """La primera biblioteca (la propia del usuario); se crea si por algún motivo no existe ninguna."""
+    fila = conn.execute("SELECT MIN(id) AS id FROM bibliotecas").fetchone()
+    if fila["id"] is None:
+        return conn.execute("INSERT INTO bibliotecas (nombre) VALUES (?)", (BIBLIOTECA_INICIAL,)).lastrowid
+    return fila["id"]
+
+
+def _nombre_valido(nombre: str, conn: sqlite3.Connection, excepto_id: int | None = None) -> str:
+    nombre = (nombre or "").strip()
+    if not nombre:
+        raise ValueError("El nombre de la biblioteca es obligatorio.")
+    otra = conn.execute("SELECT id FROM bibliotecas WHERE nombre = ?", (nombre,)).fetchone()
+    if otra and otra["id"] != excepto_id:
+        raise ValueError(f"Ya existe una biblioteca llamada «{nombre}».")
+    return nombre
+
+
+def crear_biblioteca(nombre: str, conn: sqlite3.Connection, descripcion: str = "") -> int:
+    nombre = _nombre_valido(nombre, conn)
+    bid = conn.execute("INSERT INTO bibliotecas (nombre, descripcion) VALUES (?, ?)", (nombre, descripcion)).lastrowid
+    conn.commit()
+    return bid
+
+
+def renombrar_biblioteca(biblioteca_id: int, nombre: str, conn: sqlite3.Connection) -> None:
+    nombre = _nombre_valido(nombre, conn, biblioteca_id)
+    conn.execute("UPDATE bibliotecas SET nombre = ? WHERE id = ?", (nombre, biblioteca_id))
+    conn.commit()
+
+
+def duplicar_biblioteca(biblioteca_id: int, conn: sqlite3.Connection, nombre: str | None = None) -> int:
+    """Copia la biblioteca con todos sus conceptos y análisis. La copia es independiente: no se vuelve a sincronizar
+    con la fuente original (se conserva el orden, pero no el código ni la fuente)."""
+    origen = conn.execute("SELECT * FROM bibliotecas WHERE id = ?", (biblioteca_id,)).fetchone()
+    if origen is None:
+        raise ValueError("La biblioteca no existe.")
+    if nombre is None:
+        nombre, n = f"{origen['nombre']} (copia)", 2
+        while conn.execute("SELECT 1 FROM bibliotecas WHERE nombre = ?", (nombre,)).fetchone():
+            nombre, n = f"{origen['nombre']} (copia {n})", n + 1
+    nuevo = conn.execute("INSERT INTO bibliotecas (nombre, descripcion) VALUES (?, ?)",
+                         (_nombre_valido(nombre, conn), origen["descripcion"])).lastrowid
+    for c in conn.execute("SELECT * FROM conceptos WHERE biblioteca_id = ? ORDER BY id", (biblioteca_id,)).fetchall():
+        cid = conn.execute(
+            "INSERT INTO conceptos (descripcion, unidad, modalidad, precio, categoria, apu_base, codigo, fuente, "
+            "biblioteca_id, orden) VALUES (?, ?, ?, ?, ?, ?, '', '', ?, ?)",
+            (c["descripcion"], c["unidad"], c["modalidad"], c["precio"], c["categoria"], c["apu_base"], nuevo,
+             c["orden"])).lastrowid
+        conn.execute(
+            "INSERT INTO concepto_insumos (concepto_id, categoria, descripcion, unidad, rendimiento, coeficiente, "
+            "precio, ref_categoria) SELECT ?, categoria, descripcion, unidad, rendimiento, coeficiente, precio, "
+            "ref_categoria FROM concepto_insumos WHERE concepto_id = ? ORDER BY id", (cid, c["id"]))
+    conn.commit()
+    return nuevo
+
+
+def eliminar_biblioteca(biblioteca_id: int, conn: sqlite3.Connection) -> int:
+    """Elimina la biblioteca y sus conceptos; devuelve cuántos conceptos se eliminaron. Debe quedar al menos una.
+    Las cotizaciones no cambian (usan copias de los conceptos)."""
+    if conn.execute("SELECT COUNT(*) AS n FROM bibliotecas").fetchone()["n"] <= 1:
+        raise ValueError("Debe existir al menos una biblioteca.")
+    n = conn.execute("SELECT COUNT(*) AS n FROM conceptos WHERE biblioteca_id = ?", (biblioteca_id,)).fetchone()["n"]
+    conn.execute("DELETE FROM conceptos WHERE biblioteca_id = ?", (biblioteca_id,))     # sus insumos caen en cascada
+    conn.execute("DELETE FROM bibliotecas WHERE id = ?", (biblioteca_id,))
+    conn.commit()
+    return n
+
+
+def copiar_conceptos(concepto_ids: list[int], biblioteca_destino: int, conn: sqlite3.Connection) -> int:
+    """Copia conceptos (con su análisis) a otra biblioteca; devuelve cuántos copió."""
+    n = 0
+    for cid in concepto_ids:
+        c = obtener_concepto(cid, conn)
+        if c is None:
+            continue
+        c.id, c.biblioteca_id, c.codigo, c.fuente = None, biblioteca_destino, "", ""
+        guardar_concepto(c, conn)
+        n += 1
+    return n
+
+
 def importar_conceptos(conceptos: list[dict], fuente: str, conn: sqlite3.Connection) -> tuple[int, int]:
-    """Importa (o actualiza, por `fuente` + `codigo`) conceptos con análisis; devuelve (nuevos, actualizados).
+    """Importa (o actualiza, por `codigo`) conceptos con análisis en la biblioteca llamada como la `fuente` (se crea si no
+    existe); devuelve (nuevos, actualizados).
     Cada concepto es un dict: codigo, descripcion, unidad, categoria, insumos=[[cat, desc, ud, cantidad, coef, precio, ref]]."""
+    fila = conn.execute("SELECT id FROM bibliotecas WHERE nombre = ?", (fuente,)).fetchone()
+    biblioteca = fila["id"] if fila else conn.execute("INSERT INTO bibliotecas (nombre) VALUES (?)", (fuente,)).lastrowid
     existentes = {f["codigo"]: f["id"] for f in conn.execute(
-        "SELECT id, codigo FROM conceptos WHERE fuente = ?", (fuente,))}
+        "SELECT id, codigo FROM conceptos WHERE biblioteca_id = ? AND fuente = ?", (biblioteca, fuente))}
     nuevos = actualizados = 0
     for c in conceptos:
         valores = (c["descripcion"].strip(), c.get("unidad", ""), calculo.OBRA, 0.0, c.get("categoria", ""), 1.0,
-                   str(c["codigo"]), fuente)
+                   str(c["codigo"]), fuente, biblioteca, int(c["codigo"]) if str(c["codigo"]).isdigit() else 0)
         cid = existentes.get(str(c["codigo"]))
         if cid is None:
             cid = conn.execute("INSERT INTO conceptos (descripcion, unidad, modalidad, precio, categoria, apu_base, "
-                               "codigo, fuente) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", valores).lastrowid
+                               "codigo, fuente, biblioteca_id, orden) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               valores).lastrowid
             nuevos += 1
         else:
             conn.execute("UPDATE conceptos SET descripcion = ?, unidad = ?, modalidad = ?, precio = ?, categoria = ?, "
-                         "apu_base = ?, codigo = ?, fuente = ? WHERE id = ?", (*valores, cid))
+                         "apu_base = ?, codigo = ?, fuente = ?, biblioteca_id = ?, orden = ? WHERE id = ?",
+                         (*valores, cid))
             actualizados += 1
         conn.execute("DELETE FROM concepto_insumos WHERE concepto_id = ?", (cid,))
         conn.executemany(
@@ -675,9 +807,14 @@ def duplicar_concepto(concepto_id: int, conn: sqlite3.Connection) -> int:
     return guardar_concepto(c, conn)
 
 
-def buscar_concepto(descripcion: str, unidad: str, conn: sqlite3.Connection) -> Concepto | None:
-    fila = conn.execute("SELECT * FROM conceptos WHERE descripcion = ? AND unidad = ?",
-                        (descripcion.strip(), (unidad or "").strip())).fetchone()
+def buscar_concepto(descripcion: str, unidad: str, conn: sqlite3.Connection,
+                    biblioteca_id: int | None = None) -> Concepto | None:
+    consulta = "SELECT * FROM conceptos WHERE descripcion = ? AND unidad = ?"
+    params = [descripcion.strip(), (unidad or "").strip()]
+    if biblioteca_id is not None:
+        consulta += " AND biblioteca_id = ?"
+        params.append(biblioteca_id)
+    fila = conn.execute(consulta, params).fetchone()
     return _concepto(fila, conn) if fila else None
 
 

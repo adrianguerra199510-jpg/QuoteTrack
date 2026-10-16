@@ -1,26 +1,25 @@
 """Biblioteca de conceptos reutilizables: servicios con precio fijo o ítems con análisis de precio unitario."""
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+    QAbstractItemView, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QMessageBox, QStackedWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from app import base_cgr, calculo, db, estilo, iconos
+from app import calculo, db, estilo, iconos
 from app.calculo import Apu, Concepto
 from app.ui_apu import ApuEditor
 from app.ui_comun import anchos_fijos, boton, encabezado_pagina, pagina, tabla_estandar
 
 ICONO_MODALIDAD = {calculo.SERVICIO: "briefcase", calculo.OBRA: "tool"}
+NOMBRE_CORTO = {calculo.SERVICIO: "Servicio", calculo.OBRA: "Obra"}
 
 
 def celda_tipo(modalidad: str) -> QTableWidgetItem:
-    it = QTableWidgetItem(calculo.MODALIDADES.get(modalidad, modalidad))
+    """Tipo con icono; texto corto («Servicio» / «Obra») y el nombre completo en el tooltip."""
+    it = QTableWidgetItem(NOMBRE_CORTO.get(modalidad, modalidad))
+    it.setToolTip(calculo.MODALIDADES.get(modalidad, modalidad))
     it.setIcon(iconos.icono(ICONO_MODALIDAD.get(modalidad, "file"), estilo.AZUL, 18))
     return it
-
-
-NOMBRE_CORTO = {calculo.SERVICIO: "Servicio", calculo.OBRA: "Obra"}
 
 
 def combo_modalidad(corto: bool = False) -> QComboBox:
@@ -136,10 +135,19 @@ class SelectorConceptosDialog(QDialog):
         self.busqueda.setClearButtonEnabled(True)
         self.busqueda.addAction(iconos.icono("search", estilo.APAGADO, 16), QLineEdit.LeadingPosition)
         self.busqueda.textChanged.connect(lambda *_: self._cargar())
+        self.biblioteca = QComboBox()
+        self.biblioteca.setMinimumWidth(260)
+        self.biblioteca.addItem("Todas las bibliotecas", None)
+        conn = db.get_connection()
+        for b in db.listar_bibliotecas(conn):
+            self.biblioteca.addItem(f"{b['nombre']} ({b['n']:,})", b["id"])
+        conn.close()
+        self.biblioteca.currentIndexChanged.connect(lambda *_: self._cargar())
         fila.addWidget(self.busqueda, 1)
+        fila.addWidget(self.biblioteca)
         lay.addLayout(fila)
         self.tabla = tabla_estandar(["Categoría", "Descripción", "Ud.", "Tipo", "Precio"], estirar=1)
-        anchos_fijos(self.tabla, {0: 230, 2: 60, 3: 170, 4: 110})
+        anchos_fijos(self.tabla, {0: 230, 2: 60, 3: 105, 4: 110})
         self.tabla.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tabla.doubleClicked.connect(lambda *_: self.accept())
         lay.addWidget(self.tabla, 1)
@@ -161,7 +169,7 @@ class SelectorConceptosDialog(QDialog):
 
     def _cargar(self):
         conn = db.get_connection()
-        self._conceptos = db.listar_conceptos(conn, self.busqueda.text())
+        self._conceptos = db.listar_conceptos(conn, self.busqueda.text(), biblioteca_id=self.biblioteca.currentData())
         cfg = db.coef_apu_defecto(conn)
         precios = [db.precio_referencial(c, conn, cfg) for c in self._conceptos]
         total = conn.execute("SELECT COUNT(*) AS n FROM conceptos").fetchone()["n"]
@@ -186,18 +194,38 @@ class BibliotecaTab(QWidget):
         lay = pagina(self)
         lay.addWidget(encabezado_pagina(
             "Biblioteca de conceptos",
-            "Guarda servicios y análisis de precio unitario para reutilizarlos en cualquier cotización."))
+            "Servicios y análisis de precio unitario para reutilizar en cualquier cotización, organizados en bibliotecas."))
+
+        # --- bibliotecas
+        fila = QHBoxLayout()
+        etiqueta = QLabel("Biblioteca:")
+        etiqueta.setObjectName("seccion")
+        self.bib_combo = QComboBox()
+        self.bib_combo.setMinimumWidth(260)
+        self.btn_bib_nueva = boton("Nueva", "folder-plus", "primario", tooltip="Nueva biblioteca")
+        self.btn_bib_renombrar = boton("Renombrar", "edit", tooltip="Renombrar la biblioteca")
+        self.btn_bib_duplicar = boton("Duplicar", "copy", tooltip="Duplicar la biblioteca con todos sus conceptos")
+        self.btn_bib_eliminar = boton("Eliminar", "trash", "peligro", tooltip="Eliminar la biblioteca y sus conceptos")
+        fila.addWidget(etiqueta)
+        fila.addWidget(self.bib_combo, 1)
+        for b in (self.btn_bib_nueva, self.btn_bib_renombrar, self.btn_bib_duplicar, self.btn_bib_eliminar):
+            fila.addWidget(b)
+        lay.addLayout(fila)
+
+        # --- conceptos
         barra = QHBoxLayout()
+        etiqueta_c = QLabel("Conceptos:")
+        etiqueta_c.setObjectName("seccion")
+        barra.addWidget(etiqueta_c)
         self.btn_nuevo = boton("Nuevo concepto", "plus", "primario")
         self.btn_editar = boton("Editar", "edit")
         self.btn_duplicar = boton("Duplicar", "copy")
+        self.btn_copiar = boton("Copiar a…", "download",
+                                tooltip="Copia los conceptos seleccionados a otra biblioteca")
         self.btn_eliminar = boton("Eliminar", "trash", "peligro")
-        self.btn_importar = boton("Importar base de la Contraloría", "upload",
-                                  tooltip="Carga las 1,169 actividades de la base de costos directos de Panamá")
-        for b in (self.btn_nuevo, self.btn_editar, self.btn_duplicar):
+        for b in (self.btn_nuevo, self.btn_editar, self.btn_duplicar, self.btn_copiar):
             barra.addWidget(b)
         barra.addStretch()
-        barra.addWidget(self.btn_importar)
         barra.addWidget(self.btn_eliminar)
         lay.addLayout(barra)
 
@@ -218,8 +246,9 @@ class BibliotecaTab(QWidget):
         lay.addLayout(filtros)
 
         self.tabla = tabla_estandar(["Categoría", "Descripción", "Ud.", "Tipo", "Costo directo", "Precio ref."], estirar=1)
-        anchos_fijos(self.tabla, {0: 270, 2: 60, 3: 185, 4: 120, 5: 120})
+        anchos_fijos(self.tabla, {0: 250, 2: 60, 3: 105, 4: 125, 5: 115})
         self.tabla.verticalHeader().setDefaultSectionSize(34)
+        self.tabla.setSelectionMode(QAbstractItemView.ExtendedSelection)
         lay.addWidget(self.tabla, 1)
         self.lbl_total = QLabel()
         self.lbl_total.setObjectName("subtitulo")
@@ -230,17 +259,133 @@ class BibliotecaTab(QWidget):
         nota.setWordWrap(True)
         lay.addWidget(nota)
 
-        self.busqueda.textChanged.connect(lambda *_: self.refrescar())
-        self.tipo.currentIndexChanged.connect(lambda *_: self.refrescar())
-        self.disciplina.currentIndexChanged.connect(lambda *_: self.refrescar())
-        self.btn_importar.clicked.connect(self.importar_base)
+        self.bib_combo.currentIndexChanged.connect(lambda *_: self._cambio_biblioteca())
+        self.busqueda.textChanged.connect(lambda *_: self.refrescar_conceptos())
+        self.tipo.currentIndexChanged.connect(lambda *_: self.refrescar_conceptos())
+        self.disciplina.currentIndexChanged.connect(lambda *_: self.refrescar_conceptos())
         self.tabla.cellDoubleClicked.connect(lambda *_: self.editar())
         self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
+        self.tabla.itemSelectionChanged.connect(self._actualizar_acciones)
         self.btn_nuevo.clicked.connect(self.nuevo)
         self.btn_editar.clicked.connect(self.editar)
         self.btn_duplicar.clicked.connect(self.duplicar)
+        self.btn_copiar.clicked.connect(self.copiar_a_otra)
         self.btn_eliminar.clicked.connect(self.eliminar)
+        self.btn_bib_nueva.clicked.connect(self.nueva_biblioteca)
+        self.btn_bib_renombrar.clicked.connect(self.renombrar_biblioteca)
+        self.btn_bib_duplicar.clicked.connect(self.duplicar_biblioteca)
+        self.btn_bib_eliminar.clicked.connect(self.eliminar_biblioteca)
         self.refrescar()
+
+    # ------------------------------------------------------------------ bibliotecas
+    def _biblioteca_id(self):
+        return self.bib_combo.currentData()
+
+    def _cargar_bibliotecas(self, seleccionar=None):
+        """Llena el combo de bibliotecas (conserva la elegida, o la indicada)."""
+        actual = seleccionar if seleccionar is not None else self.bib_combo.currentData()
+        conn = db.get_connection()
+        bibliotecas = db.listar_bibliotecas(conn)
+        conn.close()
+        self.bib_combo.blockSignals(True)
+        self.bib_combo.clear()
+        for b in bibliotecas:
+            self.bib_combo.addItem(f"{b['nombre']} ({b['n']:,})", b["id"])
+            self.bib_combo.setItemData(self.bib_combo.count() - 1, f"{b['nombre']}: {b['n']:,} conceptos", Qt.ToolTipRole)
+        idx = self.bib_combo.findData(actual)
+        self.bib_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.bib_combo.blockSignals(False)
+        self.btn_bib_eliminar.setEnabled(len(bibliotecas) > 1)
+
+    def _nombre_actual(self):
+        i = self.bib_combo.currentIndex()
+        if i < 0:
+            return ""
+        return self.bib_combo.itemText(i).rsplit(" (", 1)[0]
+
+    def _cambio_biblioteca(self):
+        self.disciplina.blockSignals(True)
+        self.disciplina.setCurrentIndex(0)
+        self.disciplina.blockSignals(False)
+        self.refrescar_conceptos()
+
+    def nueva_biblioteca(self):
+        nombre, ok = QInputDialog.getText(self, "Nueva biblioteca", "Nombre de la biblioteca:")
+        if not ok:
+            return
+        conn = db.get_connection()
+        try:
+            bid = db.crear_biblioteca(nombre, conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Biblioteca", str(e))
+            return
+        finally:
+            conn.close()
+        self._cargar_bibliotecas(bid)
+        self.refrescar_conceptos()
+
+    def renombrar_biblioteca(self):
+        bid = self._biblioteca_id()
+        if bid is None:
+            return
+        nombre, ok = QInputDialog.getText(self, "Renombrar biblioteca", "Nuevo nombre:", text=self._nombre_actual())
+        if not ok:
+            return
+        conn = db.get_connection()
+        try:
+            db.renombrar_biblioteca(bid, nombre, conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Biblioteca", str(e))
+            return
+        finally:
+            conn.close()
+        self._cargar_bibliotecas(bid)
+
+    def duplicar_biblioteca(self):
+        bid = self._biblioteca_id()
+        if bid is None:
+            return
+        conn = db.get_connection()
+        try:
+            nuevo = db.duplicar_biblioteca(bid, conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Biblioteca", str(e))
+            return
+        finally:
+            conn.close()
+        self._cargar_bibliotecas(nuevo)
+        self.refrescar_conceptos()
+
+    def eliminar_biblioteca(self):
+        bid = self._biblioteca_id()
+        if bid is None:
+            return
+        r = QMessageBox.question(
+            self, "Eliminar biblioteca",
+            f"¿Eliminar la biblioteca «{self._nombre_actual()}» con todos sus conceptos?\n\n"
+            "Esta acción no se puede deshacer. Las cotizaciones que ya usan esos conceptos no cambian.")
+        if r != QMessageBox.Yes:
+            return
+        conn = db.get_connection()
+        try:
+            db.eliminar_biblioteca(bid, conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Biblioteca", str(e))
+            return
+        finally:
+            conn.close()
+        self._cargar_bibliotecas()
+        self.refrescar_conceptos()
+
+    # ------------------------------------------------------------------ conceptos
+    def _ids_seleccionados(self):
+        filas = sorted({i.row() for i in self.tabla.selectedIndexes()})
+        ids = []
+        for f in filas:
+            it = self.tabla.item(f, 1)
+            if it is not None and it.data(Qt.UserRole) is not None:
+                ids.append(it.data(Qt.UserRole))
+        return ids
 
     def _id_seleccionado(self):
         f = self.tabla.currentRow()
@@ -251,26 +396,33 @@ class BibliotecaTab(QWidget):
         hay = self._id_seleccionado() is not None
         for b in (self.btn_editar, self.btn_duplicar, self.btn_eliminar):
             b.setEnabled(hay)
+        self.btn_copiar.setEnabled(bool(self._ids_seleccionados()) and self.bib_combo.count() > 1)
 
     def _cargar_disciplinas(self, conn):
-        """Llena el filtro de disciplinas (conserva la elegida si sigue existiendo)."""
+        """Llena el filtro de categorías de la biblioteca elegida (conserva la elegida si sigue existiendo)."""
         actual = self.disciplina.currentData()
         self.disciplina.blockSignals(True)
         self.disciplina.clear()
         self.disciplina.addItem("Todas las categorías", None)
-        for d in db.disciplinas_conceptos(conn):
+        for d in db.disciplinas_conceptos(conn, self._biblioteca_id()):
             self.disciplina.addItem(d, d)
         idx = self.disciplina.findData(actual)
         self.disciplina.setCurrentIndex(max(idx, 0))
         self.disciplina.blockSignals(False)
 
     def refrescar(self):
+        self._cargar_bibliotecas()
+        self.refrescar_conceptos()
+
+    def refrescar_conceptos(self):
         conn = db.get_connection()
         self._cargar_disciplinas(conn)
-        conceptos = db.listar_conceptos(conn, self.busqueda.text(), self.tipo.currentData(), self.disciplina.currentData())
+        bid = self._biblioteca_id()
+        conceptos = db.listar_conceptos(conn, self.busqueda.text(), self.tipo.currentData(),
+                                        self.disciplina.currentData(), bid)
         cfg = db.coef_apu_defecto(conn)
         precios = [db.precio_referencial(c, conn, cfg) for c in conceptos]
-        total = conn.execute("SELECT COUNT(*) AS n FROM conceptos").fetchone()["n"]
+        total = conn.execute("SELECT COUNT(*) AS n FROM conceptos WHERE biblioteca_id = ?", (bid,)).fetchone()["n"]
         conn.close()
         sel = self._id_seleccionado()
         self.tabla.setUpdatesEnabled(False)
@@ -290,41 +442,23 @@ class BibliotecaTab(QWidget):
                 self.tabla.setCurrentCell(r, 1)
         self.tabla.setUpdatesEnabled(True)
         self.lbl_total.setText(f"{len(conceptos):,} de {total:,} conceptos" if total else
-                               "La biblioteca está vacía. Crea un concepto, guarda ítems desde una cotización o importa la "
-                               "base de la Contraloría.")
+                               "Esta biblioteca está vacía. Crea un concepto, guarda ítems desde una cotización o "
+                               "copia conceptos desde otra biblioteca.")
         self._actualizar_acciones()
-
-    def importar_base(self):
-        """Carga la base de datos de costo directo de la Contraloría (idempotente: actualiza lo ya importado)."""
-        datos = base_cgr.cargar()
-        n = len(datos["conceptos"])
-        r = QMessageBox.question(
-            self, "Importar base de la Contraloría",
-            f"Se cargarán {n:,} actividades de construcción con su análisis de costos unitarios:\n\n{datos['fuente']}\n\n"
-            "Si ya las importaste antes, se actualizan con los datos originales (se pierden tus cambios a esos conceptos). "
-            "Tus conceptos propios no se tocan. ¿Continuar?")
-        if r != QMessageBox.Yes:
-            return
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            conn = db.get_connection()
-            nuevos, actualizados = db.importar_conceptos(datos["conceptos"], datos["fuente"], conn)
-            conn.close()
-        finally:
-            QApplication.restoreOverrideCursor()
-        self.refrescar()
-        QMessageBox.information(self, "Importar base de la Contraloría",
-                                f"Listo: {nuevos:,} actividades nuevas y {actualizados:,} actualizadas.")
 
     def _guardar(self, dlg):
         conn = db.get_connection()
         try:
-            db.guardar_concepto(dlg.concepto(), conn)
+            c = dlg.concepto()
+            if c.id is None:
+                c.biblioteca_id = self._biblioteca_id()
+            db.guardar_concepto(c, conn)
         except ValueError as e:
             QMessageBox.warning(self, "Concepto", str(e))
         finally:
             conn.close()
-        self.refrescar()
+        self._cargar_bibliotecas()
+        self.refrescar_conceptos()
 
     def nuevo(self):
         dlg = ConceptoDialog(parent=self)
@@ -348,17 +482,43 @@ class BibliotecaTab(QWidget):
             conn = db.get_connection()
             db.duplicar_concepto(cid, conn)
             conn.close()
-            self.refrescar()
+            self._cargar_bibliotecas()
+            self.refrescar_conceptos()
+
+    def copiar_a_otra(self):
+        ids = self._ids_seleccionados()
+        if not ids:
+            return
+        conn = db.get_connection()
+        otras = [b for b in db.listar_bibliotecas(conn) if b["id"] != self._biblioteca_id()]
+        conn.close()
+        if not otras:
+            QMessageBox.information(self, "Copiar", "Crea primero otra biblioteca para copiar los conceptos.")
+            return
+        nombres = [b["nombre"] for b in otras]
+        elegido, ok = QInputDialog.getItem(self, "Copiar a otra biblioteca",
+                                           f"Copiar {len(ids)} concepto(s) a:", nombres, 0, False)
+        if not ok:
+            return
+        destino = otras[nombres.index(elegido)]["id"]
+        conn = db.get_connection()
+        n = db.copiar_conceptos(ids, destino, conn)
+        conn.close()
+        self._cargar_bibliotecas()
+        QMessageBox.information(self, "Copiar", f"Se copiaron {n} concepto(s) a «{elegido}».")
 
     def eliminar(self):
-        cid = self._id_seleccionado()
-        if cid is None:
+        ids = self._ids_seleccionados()
+        if not ids:
             return
+        cuantos = f"{len(ids)} conceptos" if len(ids) > 1 else "el concepto seleccionado"
         if QMessageBox.question(self, "Eliminar concepto",
-                                "¿Eliminar el concepto de la biblioteca? Las cotizaciones que ya lo usan no cambian.") \
+                                f"¿Eliminar {cuantos} de la biblioteca? Las cotizaciones que ya lo usan no cambian.") \
                 != QMessageBox.Yes:
             return
         conn = db.get_connection()
-        db.eliminar_concepto(cid, conn)
+        for cid in ids:
+            db.eliminar_concepto(cid, conn)
         conn.close()
-        self.refrescar()
+        self._cargar_bibliotecas()
+        self.refrescar_conceptos()
