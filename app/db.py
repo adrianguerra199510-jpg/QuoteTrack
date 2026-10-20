@@ -387,6 +387,35 @@ def crear_cotizacion(cliente_id: int, conn: sqlite3.Connection, empresa_id: int 
     return cur.lastrowid, numero
 
 
+def duplicar_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> tuple[int, str]:
+    """Crea una cotización nueva en borrador con los mismos datos, ítems (con sus análisis), costos adicionales,
+    coeficientes, indirectos y notas. Devuelve (id, número)."""
+    cot = conn.execute("SELECT * FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()
+    if cot is None:
+        raise ValueError("La cotización no existe.")
+    nuevo, numero = crear_cotizacion(cot["cliente_id"], conn, cot["empresa_id"])
+    guardar_cotizacion(nuevo, obtener_lineas(cotizacion_id, conn), obtener_cargos(cotizacion_id, conn), conn,
+                       tasa=tasa_de_cotizacion(cotizacion_id, conn), cfg=obtener_config_apu(cotizacion_id, conn))
+    conn.execute("UPDATE cotizaciones SET notas = ?, proyecto = ? WHERE id = ?",
+                 (cot["notas"] or "", cot["proyecto"] or "", nuevo))
+    conn.commit()
+    return nuevo, numero
+
+
+def eliminar_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> str:
+    """Elimina la cotización con sus ítems, costos e indirectos; devuelve su número. No permite eliminar una
+    que ya tiene factura (la factura conserva el vínculo con su cotización de origen)."""
+    cot = conn.execute("SELECT numero FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()
+    if cot is None:
+        raise ValueError("La cotización no existe.")
+    fac = conn.execute("SELECT numero FROM facturas WHERE cotizacion_id = ?", (cotizacion_id,)).fetchone()
+    if fac:
+        raise ValueError(f"No se puede eliminar: ya tiene la factura {fac['numero']}.")
+    conn.execute("DELETE FROM cotizaciones WHERE id = ?", (cotizacion_id,))     # ítems, costos e indirectos en cascada
+    conn.commit()
+    return cot["numero"]
+
+
 def cambiar_empresa_cotizacion(cotizacion_id: int, empresa_id: int, conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE cotizaciones SET empresa_id = ? WHERE id = ?", (empresa_id, cotizacion_id))
     conn.commit()

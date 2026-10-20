@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame,
     QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QStackedWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QMenu, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from app import base_cgr, calculo, db, estilo, iconos, pdf, word
@@ -193,6 +193,8 @@ class CotizacionesTab(QWidget):
         self.tabla = tabla_estandar(["Número", "Cliente", "Proyecto", "Empresa", "Fecha", "Estado", "Total"], estirar=1)
         self.tabla.cellDoubleClicked.connect(lambda *_: self.editar_items())
         self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
+        self.tabla.setContextMenuPolicy(Qt.CustomContextMenu)          # clic derecho sobre una cotización
+        self.tabla.customContextMenuRequested.connect(self._menu_contextual)
         lay.addWidget(self.tabla, 1)
 
         acciones = QHBoxLayout()
@@ -292,14 +294,90 @@ class CotizacionesTab(QWidget):
         self.btn_items.setText("Abrir / Editar" if estado == "borrador" or estado is None else "Ver detalle")
 
     def cambiar_estado(self):
+        if self.estado_combo.currentText():
+            self._cambiar_estado_a(self.estado_combo.currentText())
+
+    def _cambiar_estado_a(self, estado):
         sel = self._seleccionada()
-        if not sel or not self.estado_combo.currentText():
+        if not sel:
             return
         conn = db.get_connection()
         try:
-            db.cambiar_estado_cotizacion(sel[0], self.estado_combo.currentText(), conn)
+            db.cambiar_estado_cotizacion(sel[0], estado, conn)
         except ValueError as e:
             QMessageBox.warning(self, "Cambio de estado", str(e))
+            return
+        finally:
+            conn.close()
+        self.refrescar()
+
+    # ------------------------------------------------------------------ clic derecho
+    def _menu_contextual(self, pos):
+        fila = self.tabla.rowAt(pos.y())
+        if fila < 0:
+            return
+        self.tabla.setCurrentCell(fila, 0)
+        self._mostrar_menu(self.construir_menu(), self.tabla.viewport().mapToGlobal(pos))
+
+    @staticmethod
+    def _mostrar_menu(menu, punto_global):
+        menu.exec(punto_global)
+
+    def construir_menu(self) -> QMenu:
+        """Menú del clic derecho para la cotización seleccionada (todas las acciones disponibles según su estado)."""
+        estado = self._estado_actual()
+        menu = QMenu(self)
+        icono = lambda nombre, color=estilo.AZUL_OSCURO: iconos.icono(nombre, color, 18)
+        menu.addAction(icono("edit"), "Abrir / Editar" if estado == "borrador" else "Ver detalle",
+                       lambda *_: self.editar_items())
+        menu.addAction(icono("eye"), "Vista previa", lambda *_: self.vista_previa())
+        menu.addSeparator()
+        siguientes = db.TRANSICIONES_COTIZACION.get(estado, [])
+        sub = menu.addMenu(icono("check"), "Cambiar estado a")
+        for e in siguientes:
+            sub.addAction(e.capitalize(), lambda *_, e=e: self._cambiar_estado_a(e))
+        sub.setEnabled(bool(siguientes))
+        menu.addAction(icono("receipt"), "Generar factura", lambda *_: self.generar_factura()).setEnabled(
+            estado == "aprobada")
+        menu.addSeparator()
+        menu.addAction(icono("download"), "Exportar PDF", lambda *_: self.exportar_pdf())
+        menu.addAction(icono("word"), "Exportar Word", lambda *_: self.exportar_word())
+        menu.addSeparator()
+        menu.addAction(icono("copy"), "Duplicar cotización", lambda *_: self.duplicar_cotizacion())
+        menu.addAction(icono("trash", estilo.ROJO), "Eliminar cotización…", lambda *_: self.eliminar_cotizacion())
+        return menu
+
+    def duplicar_cotizacion(self):
+        sel = self._seleccionada()
+        if not sel:
+            return
+        conn = db.get_connection()
+        try:
+            nuevo, numero = db.duplicar_cotizacion(sel[0], conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Duplicar cotización", str(e))
+            return
+        finally:
+            conn.close()
+        self.refrescar()
+        for fila in range(self.tabla.rowCount()):                       # deja seleccionada la copia
+            if self.tabla.item(fila, 0).data(Qt.UserRole) == nuevo:
+                self.tabla.setCurrentCell(fila, 0)
+                break
+
+    def eliminar_cotizacion(self):
+        sel = self._seleccionada()
+        if not sel:
+            return
+        r = QMessageBox.question(self, "Eliminar cotización",
+                                 f"¿Eliminar la cotización {sel[1]} con todos sus ítems?\nEsta acción no se puede deshacer.")
+        if r != QMessageBox.Yes:
+            return
+        conn = db.get_connection()
+        try:
+            db.eliminar_cotizacion(sel[0], conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Eliminar cotización", str(e))
             return
         finally:
             conn.close()
@@ -402,6 +480,8 @@ class FacturasTab(QWidget):
         self.tabla = tabla_estandar(
             ["Número", "Cliente", "Empresa", "Fecha", "Estado de pago", "Fecha de pago", "Total"], estirar=1)
         self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
+        self.tabla.setContextMenuPolicy(Qt.CustomContextMenu)          # clic derecho sobre una factura
+        self.tabla.customContextMenuRequested.connect(self._menu_contextual)
         lay.addWidget(self.tabla, 1)
 
         acciones = QHBoxLayout()
@@ -470,6 +550,35 @@ class FacturasTab(QWidget):
             if fila["id"] == sel_id:
                 self.tabla.setCurrentCell(i, 0)
         self._actualizar_acciones()
+
+    def _menu_contextual(self, pos):
+        fila = self.tabla.rowAt(pos.y())
+        if fila < 0:
+            return
+        self.tabla.setCurrentCell(fila, 0)
+        self._mostrar_menu(self.construir_menu(), self.tabla.viewport().mapToGlobal(pos))
+
+    @staticmethod
+    def _mostrar_menu(menu, punto_global):
+        menu.exec(punto_global)
+
+    def construir_menu(self) -> QMenu:
+        """Menú del clic derecho para la factura seleccionada."""
+        fila = self.tabla.currentRow()
+        estado = self.tabla.item(fila, FAC_ESTADO).text() if fila >= 0 else None
+        menu = QMenu(self)
+        icono = lambda nombre, color=estilo.AZUL_OSCURO: iconos.icono(nombre, color, 18)
+        menu.addAction(icono("eye"), "Vista previa", lambda *_: self.vista_previa())
+        menu.addSeparator()
+        menu.addAction(icono("check-circle"), "Marcar como pagada…", lambda *_: self.marcar_pagada()).setEnabled(
+            estado in ("pendiente", "vencida"))
+        menu.addAction(icono("clock", estilo.ROJO), "Marcar como vencida", lambda *_: self.marcar_vencida()).setEnabled(
+            estado == "pendiente")
+        menu.addAction(icono("edit"), "Editar notas", lambda *_: self.editar_notas())
+        menu.addSeparator()
+        menu.addAction(icono("download"), "Exportar PDF", lambda *_: self.exportar_pdf())
+        menu.addAction(icono("word"), "Exportar Word", lambda *_: self.exportar_word())
+        return menu
 
     def _aplicar(self, funcion, *args):
         conn = db.get_connection()

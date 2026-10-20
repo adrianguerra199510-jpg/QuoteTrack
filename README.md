@@ -36,6 +36,7 @@ Funcionalidad principal implementada (ver lista abajo). El formato visual de los
 - [x] **Configuración**: mostrar estado en el PDF, coeficientes de venta por defecto de los APU y plantilla de notas.
 - [x] **Interfaz**: navegación lateral, tema moderno, iconos vectoriales y logo (`assets/`).
 - [x] **Clientes**: catálogo de clientes (nombre, RUC/cédula, contacto) con edición y eliminación (no se elimina uno con cotizaciones o facturas).
+- [x] **Clic derecho**: sobre una cotización abre un menú con todas las acciones (abrir/editar, vista previa, cambiar estado, generar factura, exportar a PDF o Word, duplicar y eliminar); sobre una factura, marcar pagada/vencida, editar notas, vista previa y exportar. Una cotización con factura no se puede eliminar.
 - [x] **Vista previa**: botón «Vista previa» en Cotizaciones y Facturas, y «Guardar y vista previa» dentro del editor de la cotización; muestra las páginas tal como saldrán en el PDF, con zoom y botones para exportar a PDF o Word.
 - [x] **Reportes**: exportar cotización o factura a PDF o a Word (.docx editable, con el mismo contenido: encabezado con logo, grupos, totales y notas con viñetas) (botón "Exportar PDF" en ambas pestañas, con reportlab; el estado no se imprime salvo activar «Mostrar estado en el PDF» en Configuración; encabezado con empresa/subtítulo/correo configurables).
 
