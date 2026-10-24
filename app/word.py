@@ -8,7 +8,8 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
-from app import calculo, documento
+from app import calculo, documento, texto_rico
+from app.db import TITULO_NOTAS
 
 FUENTE = "Arial"
 GRIS = "D9D9D9"
@@ -109,16 +110,25 @@ def _parrafo(contenedor, texto="", alinear=None, negrita=False, cursiva=False, t
 
 
 def _celda_texto(celda, texto, alinear=WD_ALIGN_PARAGRAPH.LEFT, negrita=False, sangria_cm=0.0):
-    """Escribe (con saltos de línea) en una celda reutilizando su primer párrafo."""
-    lineas = (texto or "").split("\n")
-    for n, linea in enumerate(lineas):
+    """Escribe en una celda (reutilizando su primer párrafo) un texto con formato: negrita, cursiva, subrayado y listas."""
+    parrafos = texto_rico.parsear(texto) or [texto_rico.Parrafo("p", [])]
+    for n, par in enumerate(parrafos):
         p = celda.paragraphs[0] if n == 0 else celda.add_paragraph()
         p.alignment = alinear
         p.paragraph_format.space_after = Pt(1)
         p.paragraph_format.space_before = Pt(1)
-        if sangria_cm:
-            p.paragraph_format.left_indent = Cm(sangria_cm)
-        _texto(p, linea, negrita)
+        sangria = sangria_cm
+        if par.tipo != "p":
+            sangria += 0.5
+            p.paragraph_format.first_line_indent = Cm(-0.4)
+        if sangria:
+            p.paragraph_format.left_indent = Cm(sangria)
+        if par.tipo != "p":
+            _texto(p, ("•" if par.tipo == "ul" else f"{par.numero}.") + "\t", negrita)
+            p.paragraph_format.tab_stops.add_tab_stop(Cm(sangria))
+        for t in par.tramos:
+            r = _texto(p, t.texto.replace("\n", "\v"), negrita or t.negrita, t.cursiva)
+            r.underline = t.subrayado
 
 
 def _encabezado_empresa(doc, empresa) -> None:
@@ -214,11 +224,11 @@ def _tabla_totales(doc, totales) -> None:
     _anchos(t, [7.0, 3.8])
 
 
-def _notas(doc, notas) -> None:
+def _notas(doc, notas, titulo="") -> None:
     """Título y notas con viñetas reales de Word (editables); las líneas en mayúsculas son encabezados de sección."""
     if not (notas or "").strip():
         return
-    p = _parrafo(doc, "Alcance, exclusiones y condiciones", negrita=True, cursiva=True, tam=11, antes=18, despues=4)
+    p = _parrafo(doc, (titulo or "").strip() or TITULO_NOTAS, negrita=True, cursiva=True, tam=11, antes=18, despues=4)
     p.paragraph_format.keep_with_next = True
     for linea in notas.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         texto = linea.strip()
@@ -251,7 +261,7 @@ def _construir(d: documento.Documento, ruta: str) -> None:
     if d.lineas is not None:
         _tabla_items(doc, d.lineas, d.totales.tasa)
     _tabla_totales(doc, d.totales)
-    _notas(doc, d.notas)
+    _notas(doc, d.notas, d.titulo_notas)
     doc.save(ruta)
 
 

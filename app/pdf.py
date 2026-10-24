@@ -9,7 +9,7 @@ from reportlab.lib.units import cm
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import Image, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
-from app import calculo, db, documento
+from app import calculo, db, documento, texto_rico
 
 
 def _dinero(valor: float) -> str:
@@ -18,6 +18,37 @@ def _dinero(valor: float) -> str:
 
 def _esc(texto: str) -> str:
     return (texto or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _markup(tramos) -> str:
+    """Marcado de reportlab (<b>, <i>, <u>) de los tramos de un párrafo."""
+    out = ""
+    for t in tramos:
+        h = _esc(t.texto).replace("\n", "<br/>")
+        for activo, e in ((t.subrayado, "u"), (t.cursiva, "i"), (t.negrita, "b")):
+            if activo:
+                h = f"<{e}>{h}</{e}>"
+        out += h
+    return out
+
+
+def _parrafos_desc(texto, estilo, negrita=False, sufijo=""):
+    """Descripción de un ítem (con formato) como lista de párrafos de reportlab, con viñetas y numeración."""
+    parrafos = texto_rico.parsear(texto) or [texto_rico.Parrafo("p", [])]
+    res = []
+    for n, p in enumerate(parrafos):
+        cuerpo = _markup(p.tramos) or "&nbsp;"
+        if negrita:
+            cuerpo = f"<b>{cuerpo}</b>"
+        if n == len(parrafos) - 1:
+            cuerpo += sufijo
+        if p.tipo == "p":
+            res.append(Paragraph(cuerpo, estilo))
+        else:
+            marca = "•" if p.tipo == "ul" else f"{p.numero}."
+            st = ParagraphStyle("li", parent=estilo, leftIndent=estilo.leftIndent + 12, bulletIndent=estilo.leftIndent)
+            res.append(Paragraph(cuerpo, st, bulletText=marca))
+    return res
 
 
 def _estilos():
@@ -37,14 +68,14 @@ def _estilos():
     return estilos
 
 
-def _bloque_notas(estilos, notas):
+def _bloque_notas(estilos, notas, titulo=""):
     """Notas bajo el total: un párrafo por línea (respeta saltos de línea y viñetas con sangría
     francesa). Platypus los reparte entre páginas sin partir palabras ni solapar con los totales."""
     if not (notas or "").strip():
         return []
     elementos = [
         Spacer(1, 0.8 * cm),
-        Paragraph("Alcance, exclusiones y condiciones", estilos["Heading3"]),
+        Paragraph(_esc((titulo or "").strip() or db.TITULO_NOTAS), estilos["Heading3"]),
     ]
     for linea in notas.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         texto = linea.strip()
@@ -154,15 +185,13 @@ def _tabla_items(estilos, lineas, tasa):
     estilo_sub = ParagraphStyle("sub", parent=estilos["Normal"], leftIndent=8)
     grupos = []
     for i, l in enumerate(lineas):
-        desc = _esc(l.descripcion).replace("\n", "<br/>")
         if l.es_grupo:
             grupos.append(len(filas))
-            filas.append([cods[i], Paragraph(f"<b>{desc}</b>", estilos["Normal"]), "", "", "", _dinero(imps[i])])
+            filas.append([cods[i], _parrafos_desc(l.descripcion, estilos["Normal"], negrita=True), "", "", "", _dinero(imps[i])])
             continue
-        if hay_exentos and not l.aplica_itbms:
-            desc += ' <font size="7" color="#666666">(exento de ITBMS)</font>'
+        sufijo = ' <font size="7" color="#666666">(exento de ITBMS)</font>' if hay_exentos and not l.aplica_itbms else ""
         estilo = estilo_sub if l.nivel == 1 else estilos["Normal"]
-        filas.append([cods[i], Paragraph(desc, estilo), l.unidad, f"{l.cantidad:g}", _dinero(l.precio), _dinero(imps[i])])
+        filas.append([cods[i], _parrafos_desc(l.descripcion, estilo, sufijo=sufijo), l.unidad, f"{l.cantidad:g}", _dinero(l.precio), _dinero(imps[i])])
     tabla = Table(filas, colWidths=[1.4 * cm, 6.5 * cm, 1.4 * cm, 1.8 * cm, 3.2 * cm, 3.2 * cm], repeatRows=1)
     estilo = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
@@ -187,7 +216,7 @@ def _construir(doc_datos: documento.Documento, ruta: str) -> None:
     if doc_datos.lineas is not None:
         elementos += [_tabla_items(estilos, doc_datos.lineas, doc_datos.totales.tasa), Spacer(1, 0.5 * cm)]
     elementos.append(_tabla_totales(doc_datos.totales))
-    elementos += _bloque_notas(estilos, doc_datos.notas)
+    elementos += _bloque_notas(estilos, doc_datos.notas, doc_datos.titulo_notas)
     pdf.build(elementos)
 
 

@@ -15,6 +15,7 @@ class Documento:
     lineas: list | None = None       # solo cotizaciones (la factura muestra únicamente los totales)
     totales: calculo.Totales = None
     notas: str = ""
+    titulo_notas: str = ""           # vacío = «Alcance, exclusiones y condiciones»
 
     @property
     def nombre_archivo(self) -> str:
@@ -41,7 +42,7 @@ def de_cotizacion(cotizacion_id: int, mostrar_estado: bool | None = None) -> Doc
         extra.append(("Proyecto", cot["proyecto"]))
     if mostrar_estado:
         extra.append(("Estado", cot["estado"]))
-    return Documento("COTIZACIÓN", cot["numero"], cot["fecha"], cliente, empresa, extra, lineas, totales, cot["notas"])
+    return Documento("COTIZACIÓN", cot["numero"], cot["fecha"], cliente, empresa, extra, lineas, totales, cot["notas"], cot["titulo_notas"] or "")
 
 
 def de_factura(factura_id: int, mostrar_estado: bool | None = None) -> Documento:
@@ -70,7 +71,7 @@ def de_factura(factura_id: int, mostrar_estado: bool | None = None) -> Documento
         extra.append(("Fecha de pago", fac["fecha_pago"]))
     if cot:
         extra.append(("Cotización de origen", cot["numero"]))
-    return Documento("FACTURA", fac["numero"], fac["fecha"], cliente, empresa, extra, None, totales, fac["notas"])
+    return Documento("FACTURA", fac["numero"], fac["fecha"], cliente, empresa, extra, None, totales, fac["notas"], fac["titulo_notas"] or "")
 
 
 def etiquetas_totales(t: calculo.Totales) -> list[tuple[str, float, bool]]:

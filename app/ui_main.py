@@ -446,12 +446,20 @@ class CotizacionesTab(QWidget):
 class NotasDialog(QDialog):
     """Cuadro de texto multilínea con Guardar / Cancelar."""
 
-    def __init__(self, titulo, texto, parent=None):
+    def __init__(self, titulo, texto, parent=None, titulo_bloque=None):
         super().__init__(parent)
         self.setWindowTitle(titulo)
         self.resize(640, 480)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(18, 16, 18, 14)
+        self.titulo_edit = None
+        if titulo_bloque is not None:
+            fila_t = QHBoxLayout()
+            fila_t.addWidget(QLabel("Título del bloque:"))
+            self.titulo_edit = QLineEdit(titulo_bloque)
+            self.titulo_edit.setPlaceholderText(db.TITULO_NOTAS)
+            fila_t.addWidget(self.titulo_edit, 1)
+            lay.addLayout(fila_t)
         self.editor = QPlainTextEdit(texto)
         lay.addWidget(self.editor)
         fila = QHBoxLayout()
@@ -466,6 +474,9 @@ class NotasDialog(QDialog):
 
     def texto(self):
         return self.editor.toPlainText().strip("\n")
+
+    def titulo_bloque(self):
+        return self.titulo_edit.text().strip() if self.titulo_edit else ""
 
 
 class FacturasTab(QWidget):
@@ -616,11 +627,13 @@ class FacturasTab(QWidget):
             QMessageBox.information(self, "Selecciona una factura", "Selecciona una factura de la tabla.")
             return
         conn = db.get_connection()
-        dlg = NotasDialog("Notas / Términos y condiciones de la factura", db.obtener_notas_factura(fid, conn), self)
+        dlg = NotasDialog("Notas / Términos y condiciones de la factura", db.obtener_notas_factura(fid, conn), self,
+                          db.obtener_titulo_notas("facturas", fid, conn))
         conn.close()
         if dlg.exec():
             conn = db.get_connection()
             db.guardar_notas_factura(fid, dlg.texto(), conn)
+            db.guardar_titulo_notas("facturas", fid, dlg.titulo_bloque(), conn)
             conn.close()
 
     def exportar_pdf(self):

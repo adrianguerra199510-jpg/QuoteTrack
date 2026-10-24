@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from datetime import date
 
-from app import calculo
+from app import calculo, texto_rico
 from app.calculo import Apu, Cargo, ConfigApu, Concepto, Indirecto, Insumo, Linea
 
 DB_PATH = Path(__file__).resolve().parent.parent / "quotetrack.db"
@@ -192,6 +192,8 @@ def init_db() -> None:
     if "notas" not in columnas:
         conn.execute("ALTER TABLE facturas ADD COLUMN notas TEXT NOT NULL DEFAULT ''")
     conn.execute("UPDATE cotizaciones SET notas = '' WHERE notas IS NULL")
+    _agregar_columna(conn, "cotizaciones", "titulo_notas", "TEXT NOT NULL DEFAULT ''")
+    _agregar_columna(conn, "facturas", "titulo_notas", "TEXT NOT NULL DEFAULT ''")
     _agregar_columna(conn, "cotizaciones", "proyecto", "TEXT NOT NULL DEFAULT ''")
     # Migración: empresas, costos adicionales, grupos/sub-ítems e ITBMS por línea
     _agregar_columna(conn, "cotizaciones", "empresa_id", "INTEGER REFERENCES empresas(id)")
@@ -538,10 +540,10 @@ def generar_factura(cotizacion_id: int, conn: sqlite3.Connection) -> str:
         raise ValueError(f"Esta cotización ya tiene la factura {existente['numero']}.")
     numero = next_numero("FAC", "facturas", conn)
     conn.execute(
-        "INSERT INTO facturas (numero, cotizacion_id, cliente_id, fecha, estado_pago, total, notas, empresa_id) "
-        "VALUES (?, ?, ?, ?, 'pendiente', ?, ?, ?)",
+        "INSERT INTO facturas (numero, cotizacion_id, cliente_id, fecha, estado_pago, total, notas, empresa_id, titulo_notas) "
+        "VALUES (?, ?, ?, ?, 'pendiente', ?, ?, ?, ?)",
         (numero, cotizacion_id, cot["cliente_id"], date.today().isoformat(), cot["total"],
-         cot["notas"] or "", cot["empresa_id"]),
+         cot["notas"] or "", cot["empresa_id"], cot["titulo_notas"] or ""),
     )
     conn.commit()
     return numero
@@ -861,7 +863,7 @@ def costo_directo(c: Concepto) -> float:
 
 def concepto_desde_linea(l: Linea, categoria: str = "") -> Concepto:
     """Copia de un ítem de cotización para guardarlo en la biblioteca (con su análisis, si lo tiene)."""
-    return Concepto(None, l.descripcion, l.unidad, l.modalidad, 0.0 if l.usa_apu else l.precio, categoria,
+    return Concepto(None, texto_rico.a_texto_plano(l.descripcion), l.unidad, l.modalidad, 0.0 if l.usa_apu else l.precio, categoria,
                     l.apu.copia() if l.usa_apu and l.apu else None)
 
 
@@ -884,6 +886,9 @@ def guardar_config(clave: str, valor: str, conn: sqlite3.Connection) -> None:
         (clave, valor),
     )
     conn.commit()
+
+
+TITULO_NOTAS = "Alcance, exclusiones y condiciones"
 
 
 def obtener_plantilla_notas(conn: sqlite3.Connection) -> str:
@@ -931,6 +936,19 @@ def guardar_proyecto(cotizacion_id: int, proyecto: str, conn: sqlite3.Connection
 def obtener_notas_factura(factura_id: int, conn: sqlite3.Connection) -> str:
     fila = conn.execute("SELECT notas FROM facturas WHERE id = ?", (factura_id,)).fetchone()
     return (fila["notas"] or "") if fila else ""
+
+
+def obtener_titulo_notas(tabla: str, registro_id: int, conn: sqlite3.Connection) -> str:
+    """Título editable del bloque de notas ('' = el título por defecto)."""
+    assert tabla in ("cotizaciones", "facturas")
+    fila = conn.execute(f"SELECT titulo_notas FROM {tabla} WHERE id = ?", (registro_id,)).fetchone()
+    return (fila["titulo_notas"] or "") if fila else ""
+
+
+def guardar_titulo_notas(tabla: str, registro_id: int, titulo: str, conn: sqlite3.Connection) -> None:
+    assert tabla in ("cotizaciones", "facturas")
+    conn.execute(f"UPDATE {tabla} SET titulo_notas = ? WHERE id = ?", (titulo.strip(), registro_id))
+    conn.commit()
 
 
 def guardar_notas_factura(factura_id: int, notas: str, conn: sqlite3.Connection) -> None:

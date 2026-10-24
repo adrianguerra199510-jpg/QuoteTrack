@@ -1,16 +1,17 @@
 """Editor de una cotización: grupos y sub-ítems, ITBMS por línea, costos adicionales y notas."""
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from app import calculo, db, estilo, iconos
+from app import calculo, db, estilo, iconos, texto_rico
 from app.calculo import Apu, Cargo, Linea
 from app.ui_apu import AjustesApuDialog, ApuDialog
 from app.ui_biblioteca import SelectorConceptosDialog, combo_modalidad
-from app.ui_comun import DescripcionDelegate, boton, parsear_numero, tabla_estandar
+from app.ui_comun import boton, parsear_numero, tabla_estandar
+from app.ui_texto import EditorTextoDialog
 from app.ui_vista_previa import vista_previa
 
 COL_COD, COL_DESC, COL_TIPO, COL_UD, COL_CANT, COL_PRECIO, COL_IMPORTE, COL_ITBMS = range(8)
@@ -38,6 +39,7 @@ class ItemsDialog(QDialog):
         self.lineas = db.obtener_lineas(cotizacion_id, conn)
         self.cargos = db.obtener_cargos(cotizacion_id, conn)
         notas = db.obtener_notas(cotizacion_id, conn)
+        titulo_notas = db.obtener_titulo_notas("cotizaciones", cotizacion_id, conn)
         proyecto = db.obtener_proyecto(cotizacion_id, conn)
         empresas = db.listar_empresas(conn)
         empresa_actual = db.empresa_de_cotizacion(cotizacion_id, conn)
@@ -83,6 +85,7 @@ class ItemsDialog(QDialog):
         self.btn_subitem = boton("Agregar sub-ítem", "subitem")
         self.btn_subir = boton("", "arrow-up", tooltip="Mover arriba")
         self.btn_bajar = boton("", "arrow-down", tooltip="Mover abajo")
+        self.btn_texto = boton("Editar texto", "edit", tooltip="Editar la descripción con formato (F2 o doble clic)")
         self.btn_quitar = boton("Quitar", "trash", "peligro")
         self.btn_itbms = boton("ITBMS", "percent")
         menu = QMenu(self.btn_itbms)
@@ -95,7 +98,8 @@ class ItemsDialog(QDialog):
         self.btn_subir.clicked.connect(lambda: self.mover(-1))
         self.btn_bajar.clicked.connect(lambda: self.mover(1))
         self.btn_quitar.clicked.connect(self.quitar)
-        for b in (self.btn_grupo, self.btn_item, self.btn_subitem, self.btn_subir, self.btn_bajar):
+        self.btn_texto.clicked.connect(lambda: self.editar_descripcion())
+        for b in (self.btn_grupo, self.btn_item, self.btn_subitem, self.btn_texto, self.btn_subir, self.btn_bajar):
             barra.addWidget(b)
         barra.addStretch()
         barra.addWidget(self.btn_itbms)
@@ -126,7 +130,6 @@ class ItemsDialog(QDialog):
         self.tabla.setSelectionBehavior(QTableWidget.SelectRows)
         self.tabla.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed
                                    | QTableWidget.AnyKeyPressed if editable else QTableWidget.NoEditTriggers)
-        self.tabla.setItemDelegateForColumn(COL_DESC, DescripcionDelegate(self.tabla))
         h = self.tabla.horizontalHeader()
         h.setSectionResizeMode(COL_COD, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(COL_DESC, QHeaderView.Stretch)
@@ -135,6 +138,7 @@ class ItemsDialog(QDialog):
             self.tabla.setColumnWidth(c, ancho)
         self.tabla.itemChanged.connect(self._al_editar_linea)
         self.tabla.cellDoubleClicked.connect(self._doble_clic)
+        QShortcut(QKeySequence(Qt.Key_F2), self.tabla, activated=self.editar_descripcion)
         # el alto de cada fila depende del ancho de la descripción: se recalcula al cambiar el ancho
         h.sectionResized.connect(lambda *_: self.tabla.resizeRowsToContents())
         layout.addWidget(self.tabla, 3)
@@ -177,6 +181,12 @@ class ItemsDialog(QDialog):
         self.btn_plantilla.clicked.connect(self.insertar_plantilla)
         fila_notas.addWidget(self.btn_plantilla)
         layout.addLayout(fila_notas)
+        fila_titulo = QHBoxLayout()
+        fila_titulo.addWidget(QLabel("Título del bloque:"))
+        self.titulo_notas_edit = QLineEdit(titulo_notas)
+        self.titulo_notas_edit.setPlaceholderText(db.TITULO_NOTAS)
+        fila_titulo.addWidget(self.titulo_notas_edit, 1)
+        layout.addLayout(fila_titulo)
         self.notas_edit = QPlainTextEdit()
         self.notas_edit.setPlainText(notas)
         self.notas_edit.setPlaceholderText("Alcance, exclusiones y condiciones que saldrán en el PDF…")
@@ -213,6 +223,7 @@ class ItemsDialog(QDialog):
                       self.btn_biblioteca):
                 w.setEnabled(False)
             self.notas_edit.setReadOnly(True)
+            self.titulo_notas_edit.setReadOnly(True)
             self.proyecto_edit.setReadOnly(True)
             self.empresa_combo.setEnabled(False)
 
@@ -274,7 +285,8 @@ class ItemsDialog(QDialog):
         for i, l in enumerate(self.lineas):
             cod = QTableWidgetItem()
             cod.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            desc = QTableWidgetItem(l.descripcion)
+            desc = QTableWidgetItem(texto_rico.a_texto_plano(l.descripcion))
+            desc.setToolTip("Doble clic o F2 para editar el texto con formato" if self.editable else "")
             desc.setIcon(iconos.icono("folder", estilo.AZUL, 18) if l.es_grupo else
                          iconos.icono("subitem", estilo.APAGADO, 18) if l.nivel == 1 else iconos.icono("file", estilo.APAGADO, 18))
             tipo = QTableWidgetItem()
@@ -301,8 +313,9 @@ class ItemsDialog(QDialog):
                 for it in (cod, desc, tipo, ud, cant, precio, importe, itbms):
                     it.setBackground(FONDO_GRUPO)
                     it.setFont(negrita)
+            desc.setFlags(base)      # la descripción se edita en su propia ventana
             if not self.editable:
-                for it in (desc, ud, cant, precio):
+                for it in (ud, cant, precio):
                     it.setFlags(base)
             for c, it in enumerate((cod, desc, tipo, ud, cant, precio, importe, itbms)):
                 self.tabla.setItem(i, c, it)
@@ -418,9 +431,7 @@ class ItemsDialog(QDialog):
     def _insertar(self, pos, linea):
         self.lineas.insert(pos, linea)
         self._render_lineas(pos)
-        it = self.tabla.item(pos, COL_DESC)
-        if it is not None and self.editable:
-            self.tabla.editItem(it)
+        self.tabla.setCurrentCell(pos, COL_DESC)
 
     def agregar_grupo(self):
         self._insertar(len(self.lineas), Linea("grupo", 0))
@@ -500,7 +511,26 @@ class ItemsDialog(QDialog):
             l.modalidad, l.apu = calculo.SERVICIO, None
         self._render_lineas(fila)
 
+    def editar_descripcion(self, fila=None):
+        """Abre el editor con formato de la descripción del ítem (o grupo) seleccionado."""
+        i = self._fila_actual() if fila is None else fila
+        if not (0 <= i < len(self.lineas)):
+            return
+        l = self.lineas[i]
+        dlg = EditorTextoDialog(l.descripcion, f"Descripción · ítem {calculo.codigos(self.lineas)[i]}",
+                                not self.editable, self)
+        if self._ejecutar(dlg) and self.editable:
+            l.descripcion = dlg.texto()
+            self._render_lineas(i)
+
+    @staticmethod
+    def _ejecutar(dlg):
+        return dlg.exec()
+
     def _doble_clic(self, fila, col):
+        if col == COL_DESC:
+            self.editar_descripcion(fila)
+            return
         if col == COL_PRECIO and 0 <= fila < len(self.lineas) and self.lineas[fila].usa_apu:
             self.abrir_apu()
 
@@ -516,7 +546,7 @@ class ItemsDialog(QDialog):
                 "Este ítem es un servicio profesional (precio fijo). Cambia su tipo a «Mano de obra y material» "
                 "para analizar su precio unitario.")
             return
-        dlg = ApuDialog(l.descripcion, l.unidad, l.apu or Apu(), self.cfg, self.coef_ind, self.editable, self)
+        dlg = ApuDialog(texto_rico.a_texto_plano(l.descripcion), l.unidad, l.apu or Apu(), self.cfg, self.coef_ind, self.editable, self)
         if dlg.exec() and self.editable:
             l.apu = dlg.apu
             self._render_lineas(i)
@@ -554,7 +584,7 @@ class ItemsDialog(QDialog):
         else:
             g = self._padre(i)
             candidatos = [(self.lineas[i], self.lineas[g].descripcion if self.lineas[i].nivel == 1 and g >= 0 else "")]
-        candidatos = [(l, cat) for l, cat in candidatos if l.descripcion.strip()]
+        candidatos = [(l, texto_rico.a_texto_plano(cat)) for l, cat in candidatos if not texto_rico.es_vacio(l.descripcion)]
         if not candidatos:
             QMessageBox.information(self, "Biblioteca", "Escribe primero la descripción del ítem.")
             return
@@ -701,11 +731,11 @@ class ItemsDialog(QDialog):
         cods = calculo.codigos(self.lineas)
         lineas = []
         for i, l in enumerate(self.lineas):
-            vacia = not l.descripcion and (l.es_grupo and not self._hijos(i) or
+            vacia = texto_rico.es_vacio(l.descripcion) and (l.es_grupo and not self._hijos(i) or
                                            not l.es_grupo and l.precio == 0)
             if vacia:
                 continue
-            if not l.descripcion:
+            if texto_rico.es_vacio(l.descripcion):
                 return None, None, f"Falta la descripción del ítem {cods[i]}."
             lineas.append(l)
         cargos = []
@@ -740,6 +770,7 @@ class ItemsDialog(QDialog):
             db.cambiar_empresa_cotizacion(self.cotizacion_id, self.empresa_combo.currentData(), conn)
         db.guardar_cotizacion(self.cotizacion_id, lineas, cargos, conn, tasa=self.tasa, cfg=self.cfg)
         db.guardar_notas(self.cotizacion_id, self.notas_edit.toPlainText().strip("\n"), conn)
+        db.guardar_titulo_notas("cotizaciones", self.cotizacion_id, self.titulo_notas_edit.text(), conn)
         db.guardar_proyecto(self.cotizacion_id, self.proyecto_edit.text().strip(), conn)
         conn.close()
         return True
