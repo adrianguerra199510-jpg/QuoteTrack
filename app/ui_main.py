@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QMenu, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from app import base_cgr, calculo, db, estilo, iconos, pdf, word
+from app import base_cgr, calculo, datos_iniciales, db, estilo, iconos, pdf, word
 from app.recursos import ruta_recurso
 from app.ui_comun import (  # noqa: F401  (se reexportan para compatibilidad)
     DescripcionDelegate, FiltroBar, boton, celda_dinero, celda_estado, encabezado_pagina, exportar_pdf, exportar_word,
@@ -831,6 +831,7 @@ def main():
     db.init_db()
     conn = db.get_connection()
     base_cgr.precargar(conn)        # la base de costos de la Contraloría queda cargada como una biblioteca
+    datos_iniciales.precargar(conn)  # empresas, clientes, cotizaciones y factura de arranque (una sola vez)
     conn.close()
     app = QApplication(sys.argv)
     estilo.aplicar(app)

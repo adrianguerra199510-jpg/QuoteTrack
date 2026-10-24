@@ -75,3 +75,9 @@ build_portable.bat
 ```
 
 Deja el ejecutable en `dist\QuoteTrack\QuoteTrack.exe` y un `QuoteTrack_portable.zip` para compartir.
+
+## Novedades recientes
+- **Editor de texto con formato** para la descripción de cada ítem (doble clic, F2 o «Editar texto»): negrita, cursiva, subrayado, viñetas y numeración; ventana amplia con desplazamiento. El formato se respeta en el PDF, el Word y la vista previa.
+- **Título del bloque de notas editable** en cotizaciones y facturas (por defecto «Alcance, exclusiones y condiciones»).
+- **Datos iniciales**: la primera vez que se abre la app se cargan las empresas, clientes, 4 cotizaciones y la factura FAC-2026-0001 de `assets/datos_iniciales.json`.
+- En el ejecutable, la base de datos se guarda en `%APPDATA%\QuoteTrack` (no se pierde al actualizar la carpeta); si había una junto al .exe se copia sola.

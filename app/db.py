@@ -2,14 +2,37 @@
 Capa de acceso a datos para QuoteTrack.
 Usa SQLite (archivo local quotetrack.db) para clientes, cotizaciones y facturas.
 """
+import os
+import re
+import shutil
 import sqlite3
+import sys
 from pathlib import Path
 from datetime import date
 
 from app import calculo, texto_rico
 from app.calculo import Apu, Cargo, ConfigApu, Concepto, Indirecto, Insumo, Linea
 
-DB_PATH = Path(__file__).resolve().parent.parent / "quotetrack.db"
+def _ruta_db() -> Path:
+    """En desarrollo la base vive junto al código. En el ejecutable se guarda en la carpeta de datos del usuario
+    (%APPDATA%\\QuoteTrack), para que no se pierda al descomprimir una versión nueva; si había una base junto
+    al ejecutable (versiones anteriores) se copia la primera vez."""
+    local = Path(__file__).resolve().parent.parent / "quotetrack.db"
+    if not getattr(sys, "frozen", False):
+        return local
+    base = Path(os.environ.get("APPDATA") or Path.home() / ".local" / "share") / "QuoteTrack"
+    destino = base / "quotetrack.db"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        junto_al_exe = Path(sys.executable).resolve().parent / "quotetrack.db"
+        if not destino.exists() and junto_al_exe.exists():
+            shutil.copy2(junto_al_exe, destino)
+    except OSError:
+        return Path(sys.executable).resolve().parent / "quotetrack.db"
+    return destino
+
+
+DB_PATH = _ruta_db()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS clientes (
@@ -222,13 +245,16 @@ def init_db() -> None:
 
 
 def next_numero(prefijo: str, tabla: str, conn: sqlite3.Connection) -> str:
-    """Genera un número consecutivo tipo COT-2026-0001 / FAC-2026-0001."""
+    """Genera un número consecutivo tipo COT-2026-0001 / FAC-2026-0001 (sigue al mayor existente, aunque
+    haya números con sufijo como COT-2026-0003-B)."""
     anio = date.today().year
-    cur = conn.execute(
-        f"SELECT COUNT(*) AS n FROM {tabla} WHERE numero LIKE ?", (f"{prefijo}-{anio}-%",)
-    )
-    n = cur.fetchone()["n"] + 1
-    return f"{prefijo}-{anio}-{n:04d}"
+    cabecera = f"{prefijo}-{anio}-"
+    mayor = 0
+    for fila in conn.execute(f"SELECT numero FROM {tabla} WHERE numero LIKE ?", (cabecera + "%",)):
+        m = re.match(r"(\d+)", fila["numero"][len(cabecera):])
+        if m:
+            mayor = max(mayor, int(m.group(1)))
+    return f"{cabecera}{mayor + 1:04d}"
 
 
 ITBMS_RATE = 0.07  # ITBMS Panamá 7% (tasa por defecto de una empresa nueva)

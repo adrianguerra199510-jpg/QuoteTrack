@@ -1,0 +1,221 @@
+{
+ "empresas": [
+  {
+   "nombre": "INTEGRO SA",
+   "subtitulo": "INGENIERIA ESTRUCTURAL",
+   "correo": "Adrianguerra_95@outlook.com",
+   "ruc": "8-891-1125",
+   "itbms_tasa": 7,
+   "logo": "assets/iniciales/logo_integro.png"
+  },
+  {
+   "nombre": "INARQS SA.",
+   "subtitulo": "INGENIERIA Y ARQUITECTURA S.A.",
+   "correo": "jose.guerra@inarqs.com",
+   "itbms_tasa": 7,
+   "logo": "assets/iniciales/logo_inarqs_sa.png"
+  },
+  {
+   "nombre": "INARQS, S.A.",
+   "subtitulo": "INGENIEROS Y ARQUITECTOS",
+   "ruc": "155768377-2-2025",
+   "itbms_tasa": 7,
+   "logo": "assets/iniciales/logo_inarqs_ingenieros.png"
+  }
+ ],
+ "clientes": [
+  {
+   "nombre": "D management group",
+   "identificacion": "1160940-1-573690",
+   "contacto": "Andy Dinger"
+  },
+  {
+   "nombre": "FORZA CREATIVA",
+   "identificacion": "1256615-1-594568",
+   "contacto": "David Bonet/Katty Borges"
+  },
+  {
+   "nombre": "MAVTEK SA.",
+   "identificacion": "1865720-1-716183 DV 73",
+   "contacto": "LUIS VALDES"
+  },
+  {
+   "nombre": "S.N",
+   "identificacion": "",
+   "contacto": "Luis Valdez"
+  }
+ ],
+ "cotizaciones": [
+  {
+   "numero": "COT-2026-0001",
+   "fecha": "2026-10-19",
+   "estado": "aprobada",
+   "empresa": "INTEGRO SA",
+   "cliente": "D management group",
+   "proyecto": "Fundacion tanques Linde penonome",
+   "tasa": 7,
+   "notas": "ALCANCE\n• Diseño estructural integral: modelo y análisis, memoria de cálculo y planos estructurales, conforme al REP-2021 y ACI 318-19.\n• El precio corresponde a las áreas de construcción indicadas en el alcance.\n\nEXCLUSIONES\n• Estudio geotécnico y recomendaciones de cimentación.\n• Cimentación profunda (pilotes), que se cotiza por separado si aplica.\n• Planos de taller.\n• Inspección en obra y supervisión.\n\nREVISIONES\n• Se incluye un máximo de dos (2) rondas de revisión por entregable. Las revisiones adicionales o cambios de alcance se cobran por hora o mediante adenda.\n\nFORMA DE PAGO\n• 50% al inicio del proyecto.\n• 50% a la entrega de planos.\n\nVALIDEZ DE LA OFERTA\n• Esta cotización tiene una validez de 30 días calendario a partir de la fecha de emisión.",
+   "lineas": [
+    {
+     "tipo": "item",
+     "nivel": 0,
+     "descripcion": "Servicio de ingenieria para el diseño de fundacion de tanque de nitrogeno",
+     "cantidad": 1,
+     "precio": 350.0,
+     "aplica_itbms": false,
+     "unidad": ""
+    }
+   ]
+  },
+  {
+   "numero": "COT-2026-0002",
+   "fecha": "2026-10-14",
+   "estado": "borrador",
+   "empresa": "INTEGRO SA",
+   "cliente": "FORZA CREATIVA",
+   "proyecto": "REDISEÑO ESTRUCTURAL DE PISCINA CASAS 45 Y 46",
+   "tasa": 0,
+   "notas": "ALCANCE\n• Diseño estructural integral: modelo y análisis, memoria de cálculo y planos estructurales, conforme al REP-2021 y ACI 318-19.\n• El precio corresponde a las áreas de construcción indicadas en el alcance.\n\nEXCLUSIONES\n• Planos de taller.\n• Inspección en obra y supervisión.\n• Diseño de instalaciones (eléctrico, mecánico, sanitario) y fachadas especiales.\n\nREVISIONES\n• Se incluye un máximo de dos (2) rondas de revisión por entregable. Las revisiones adicionales o cambios de alcance se cobran por hora o mediante adenda.\n\nFORMA DE PAGO\n50% incial.\n50% finalizado.\n\nTIEMPO ESTIMADO\n4 dias laborales a partir del abono inicial.\n\nVALIDEZ DE LA OFERTA\n• Esta cotización tiene una validez de 30 días calendario a partir de la fecha de emisión.",
+   "lineas": [
+    {
+     "tipo": "item",
+     "nivel": 0,
+     "descripcion": "Rediseño de estructura de piscina (muro de contención o estabilización de talud), incluyendo análisis geotécnico-estructural, verificación de estabilidad y drenaje, con planos y memoria de cálculo conforme a ACI 318-19.",
+     "cantidad": 1,
+     "precio": 650.0,
+     "aplica_itbms": true,
+     "unidad": ""
+    }
+   ]
+  },
+  {
+   "numero": "COT-2026-0003",
+   "fecha": "2026-10-15",
+   "estado": "enviada",
+   "empresa": "INARQS SA.",
+   "cliente": "MAVTEK SA.",
+   "proyecto": "VALLA COSTA DEL ESTE.",
+   "tasa": 0,
+   "notas": "ALCANCE\n• Diseño estructural integral: modelo y análisis, memoria de cálculo y planos estructurales, conforme al REP-2021 y ACI 318-19.\n• Elaboracion de planos arquitectonicos, coordinacion tecnica y gestion de aprobacion del proyecto.\n• Elaboracion de planos electricos: Analisis, memoria de calculo y planos electricos, conforme a las normativas aplicables.\n• El precio corresponde a los puntos indicados en el alcance.\n\nEXCLUSIONES\n• Cimentación profunda (pilotes), que se cotiza por separado si aplica.\n• Planos de taller.\n• Inspección en obra y supervisión.\n• Diseño de instalaciones (mecánico, sanitario).\n• Impuestos municipales.\n\nREVISIONES\n• Se incluye un máximo de dos (2) rondas de revisión por entregable. Las revisiones adicionales o cambios de alcance se cobran por hora o mediante adenda.\n\nFORMA DE PAGO\n• 30% al inicio del proyecto.\n• 40% a la entrega de planos.\n• 30% a la aprobación final.\n\nTIEMPO DE ENTREGA\n-Paquete de planos y memorias de calculo. (45 DIAS HABILES)\n-Permisos y otros.(Aproximadamente 30 dias habiles sujeto a los tiempos de revisión, observaciones y aprobación de las autoridades competentes.)\n\nVALIDEZ DE LA OFERTA\n• Esta cotización tiene una validez de 30 días calendario a partir de la fecha de emisión.\n\nOBSERVACIONES\n• El plazo de entrega contara a partir de la cancelacion del abono inicial y la entrega de la documentacion correspondiente por parte del cliente.",
+   "lineas": [
+    {
+     "tipo": "item",
+     "nivel": 0,
+     "descripcion": "<p><b>Levantamiento topográfico y verificación de sitio:</b></p><p>Descripción: Visita al sitio de ubicación de la valla, levantamiento altimétrico y planimétrico del terreno o azotea, verificación de linderos, interferencias aéreas (tendido eléctrico) y estudio de visibilidad.</p>",
+     "cantidad": 1,
+     "precio": 252.0,
+     "aplica_itbms": true,
+     "unidad": ""
+    },
+    {
+     "tipo": "item",
+     "nivel": 0,
+     "descripcion": "<p><b>Estudio de mecánica de suelos (si aplica para cimentación profunda):</b></p><p>Descripción: Perforación o ensayos de penetración estándar (SPT) para determinar la capacidad portante del suelo y definir el tipo de cimentación óptima para resistir cargas de viento.</p>",
+     "cantidad": 1,
+     "precio": 1677.76,
+     "aplica_itbms": true,
+     "unidad": ""
+    },
+    {
+     "tipo": "item",
+     "nivel": 0,
+     "descripcion": "<p><b>Planos arquitectónicos de implantación:</b></p><p>Descripción: Plano de ubicación, emplazamiento respecto a servidumbres públicas, retiros municipales y normativas de urbanismo locales.</p>",
+     "cantidad": 1,
+     "precio": 840.0,
+     "aplica_itbms": true,
+     "unidad": ""
+    },
+    {
+     "tipo": "item",
+     "nivel": 0,
+     "descripcion": "<p><b>Modelaje y análisis estructural:</b></p><p>Descripción: Modelado matemático de la torre (monoposte o celosía) y la estructura soporte de la pantalla considerando las cargas de viento según las normativas aplicables en Panamá (velocidad de diseño e interacción de ráfagas).</p><p><b>Memoria de cálculo estructural:</b></p><p>Descripción: Elaboración del documento técnico firmado por idóneo que respalde el diseño ante la Junta Técnica de Ingeniería y Arquitectura (JTIA) y los municipios locales.</p><p><b>Planos constructivos de estructura:</b></p><p>Descripción: Planos de detalles de fabricación metálica, uniones, pernos de anclaje, perfiles, soldaduras y planos detallados de la cimentación de hormigón armado.</p>",
+     "cantidad": 1,
+     "precio": 3000.0,
+     "aplica_itbms": true,
+     "unidad": ""
+    },
+    {
+     "tipo": "item",
+     "nivel": 0,
+     "descripcion": "<p><b>Sistema de puesta a tierra (Sistema de Terra):</b></p><p>Descripción: Diseño del sistema de protección contra descargas atmosféricas (pararrayos) y puesta a tierra de toda la estructura metálica para cumplimiento de normas de seguridad eléctrica.</p><p><b>Planos eléctricos:</b></p><p>Descripción: Planos de planta, diagramas unifilares y detalles de instalación eléctrica listos para aprobación y ejecución.</p>",
+     "cantidad": 1,
+     "precio": 2016.0,
+     "aplica_itbms": true,
+     "unidad": ""
+    },
+    {
+     "tipo": "item",
+     "nivel": 0,
+     "descripcion": "<p><b>Gestión de anteproyecto y permisos de construcción:</b></p><p>Descripción: Preparación de carpetas técnicas, firma de planos como profesional idóneo y seguimiento de trámites ante las entidades correspondientes (Municipio, Ministerio de Obras Públicas - MOP si está cerca de servidumbre vial, bomberos, etc., según aplique). incluye impresiones.</p>",
+     "cantidad": 1,
+     "precio": 990.0,
+     "aplica_itbms": true,
+     "unidad": ""
+    }
+   ]
+  },
+  {
+   "numero": "COT-2026-0003-B",
+   "fecha": "2026-10-24",
+   "estado": "borrador",
+   "empresa": "INARQS, S.A.",
+   "cliente": "S.N",
+   "proyecto": "VALLA COSTA DEL ESTE.",
+   "tasa": 7,
+   "notas": "ALCANCE\n• Diseño estructural integral: modelo y análisis, memoria de cálculo y planos estructurales, conforme al REP-2021 y ACI 318-19.\n• El precio corresponde a las áreas de construcción indicadas en el alcance.\n\nEXCLUSIONES\n• Estudio geotécnico y recomendaciones de cimentación.\n• Cimentación profunda (pilotes), que se cotiza por separado si aplica.\n• Planos de taller.\n• Inspección en obra y supervisión.\n• Diseño de instalaciones (eléctrico, mecánico, sanitario) y fachadas especiales.\n\nREVISIONES\n• Se incluye un máximo de dos (2) rondas de revisión por entregable. Las revisiones adicionales o cambios de alcance se cobran por hora o mediante adenda.\n\nFORMA DE PAGO\n• 30% al inicio del proyecto.\n• 40% a la entrega de planos.\n• 30% a la aprobación final.\n\nTIEMPO DE ENTREGA\n-Paquete de planos y memorias de calculo. (45 DIAS HABILES)\n\nVALIDEZ DE LA OFERTA\n• Esta cotización tiene una validez de 30 días calendario a partir de la fecha de emisión.\n\nOBSERVACIONES\n• El plazo de entrega contara a partir de la cancelacion del abono inicial y la entrega de la documentacion correspondiente por parte del cliente.",
+   "lineas": [
+    {
+     "tipo": "grupo",
+     "nivel": 0,
+     "descripcion": "Planos arquitectónicos de implantación:"
+    },
+    {
+     "tipo": "item",
+     "nivel": 1,
+     "descripcion": "<p>Plano de ubicación, emplazamiento respecto a servidumbres públicas, retiros municipales y normativas de urbanismo locales.</p>",
+     "cantidad": 1,
+     "precio": 840.0,
+     "aplica_itbms": false,
+     "unidad": ""
+    },
+    {
+     "tipo": "grupo",
+     "nivel": 0,
+     "descripcion": "Desarrollo de estructura:"
+    },
+    {
+     "tipo": "item",
+     "nivel": 1,
+     "descripcion": "<p><b>Modelaje y análisis estructural:</b></p><p>Descripción: Modelado matemático de la torre (monoposte o celosía) y la estructura soporte de la pantalla considerando las cargas de viento según las normativas aplicables en Panamá (velocidad de diseño e interacción de ráfagas).</p><p><b>Memoria de cálculo estructural:</b></p><p>Descripción: Elaboración del documento técnico firmado por idóneo que respalde el diseño ante la Junta Técnica de Ingeniería y Arquitectura (JTIA) y los municipios locales.</p><p><b>Planos constructivos de estructura:</b></p><p>Descripción: Planos de detalles de fabricación metálica, uniones, pernos de anclaje, perfiles, soldaduras y planos detallados de la cimentación de hormigón armado.</p>",
+     "cantidad": 1,
+     "precio": 3000.0,
+     "aplica_itbms": false,
+     "unidad": ""
+    },
+    {
+     "tipo": "grupo",
+     "nivel": 0,
+     "descripcion": "DESARROLLO MEP"
+    },
+    {
+     "tipo": "item",
+     "nivel": 1,
+     "descripcion": "<p><b>Sistema de puesta a tierra (Sistema de Terra):</b></p><p>Descripción: Diseño del sistema de protección contra descargas atmosféricas (pararrayos) y puesta a tierra de toda la estructura metálica para cumplimiento de normas de seguridad eléctrica.</p><p><b>Planos eléctricos:</b></p><p>Descripción: Planos de planta, diagramas unifilares y detalles de instalación eléctrica listos para aprobación y ejecución.</p>",
+     "cantidad": 1,
+     "precio": 2016.0,
+     "aplica_itbms": false,
+     "unidad": ""
+    }
+   ]
+  }
+ ],
+ "facturas": [
+  {
+   "numero": "FAC-2026-0001",
+   "fecha": "2026-10-24",
+   "cotizacion": "COT-2026-0001",
+   "titulo_notas": "Información de pago",
+   "notas": "MÉTODOS DE PAGO\nACH / Transferencia Bancaria:\nBanco: Banco General\nTipo de Cuenta: Cuenta de Ahorros\nNúmero de Cuenta: 0439995725053\nTitular: JOSE ADRIAN GUERRA ESPINOSA\n\nYappy:\nNúmero: 6867-4104 (JOSE ADRIAN GUERRA ESPINOSA)\n\nPor favor, enviar el comprobante de pago con el número de factura correspondiente."
+  }
+ ]
+}
