@@ -81,3 +81,25 @@ def test_titulo_notas_factura_y_cotizacion(cot, tmp_path, pdf_sin_comprimir):
 def test_dialogo_notas_con_titulo(qapp):
     d = ui_main.NotasDialog("x", "texto", None, "Mi título")
     assert d.titulo_bloque() == "Mi título"
+
+
+def test_ocultar_texto_en_tabla(cot, qapp):
+    d = ui_items.ItemsDialog(1, "COT-2026-0001", editable=True)
+    celda = lambda: d.tabla.item(0, ui_items.COL_DESC)
+    assert "uno" in celda().text()
+    d.btn_ver_texto.setChecked(False)
+    assert celda().text() == "Muro reforzado y pintado …" and "uno" in celda().toolTip()
+    d.btn_ver_texto.setChecked(True)
+    assert "uno" in celda().text()
+
+
+def test_contraer_costos_y_notas(cot, qapp):
+    d = ui_items.ItemsDialog(1, "COT-2026-0001", editable=True)
+    d.show()
+    assert d.tabla_cargos.isVisible() and d.cuerpo_notas.isVisible()
+    d.btn_ver_cargos.setChecked(False)
+    d.btn_ver_notas.setChecked(False)
+    assert not d.tabla_cargos.isVisible() and not d.cuerpo_notas.isVisible()
+    assert d.btn_ver_cargos.text() == "Expandir"
+    d.btn_ver_notas.setChecked(True)
+    assert d.cuerpo_notas.isVisible() and d.btn_plantilla.isVisible()

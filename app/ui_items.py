@@ -1,5 +1,5 @@
 """Editor de una cotización: grupos y sub-ítems, ITBMS por línea, costos adicionales y notas."""
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
@@ -86,6 +86,9 @@ class ItemsDialog(QDialog):
         self.btn_subir = boton("", "arrow-up", tooltip="Mover arriba")
         self.btn_bajar = boton("", "arrow-down", tooltip="Mover abajo")
         self.btn_texto = boton("Editar texto", "edit", tooltip="Editar la descripción con formato (F2 o doble clic)")
+        self.btn_ver_texto = boton("Ocultar texto", "eye", tooltip="Muestra u oculta el detalle de las descripciones en la tabla (solo la primera línea)")
+        self.btn_ver_texto.setCheckable(True)
+        self.btn_ver_texto.setChecked(True)
         self.btn_quitar = boton("Quitar", "trash", "peligro")
         self.btn_itbms = boton("ITBMS", "percent")
         menu = QMenu(self.btn_itbms)
@@ -99,7 +102,8 @@ class ItemsDialog(QDialog):
         self.btn_bajar.clicked.connect(lambda: self.mover(1))
         self.btn_quitar.clicked.connect(self.quitar)
         self.btn_texto.clicked.connect(lambda: self.editar_descripcion())
-        for b in (self.btn_grupo, self.btn_item, self.btn_subitem, self.btn_texto, self.btn_subir, self.btn_bajar):
+        self.btn_ver_texto.toggled.connect(self._alternar_texto)
+        for b in (self.btn_grupo, self.btn_item, self.btn_subitem, self.btn_texto, self.btn_ver_texto, self.btn_subir, self.btn_bajar):
             barra.addWidget(b)
         barra.addStretch()
         barra.addWidget(self.btn_itbms)
@@ -156,6 +160,8 @@ class ItemsDialog(QDialog):
         self.btn_quitar_cargo.clicked.connect(self.quitar_cargo)
         fila.addWidget(self.btn_cargo)
         fila.addWidget(self.btn_quitar_cargo)
+        self.btn_ver_cargos = self._boton_seccion(fila, lambda v: self.tabla_cargos.setVisible(v)
+                                                  or self.btn_cargo.setVisible(v) or self.btn_quitar_cargo.setVisible(v))
         layout.addLayout(fila)
         self.tabla_cargos = tabla_estandar(["Concepto", "Tipo", "Valor", "Monto", "ITBMS"])
         self.tabla_cargos.setFixedHeight(150)
@@ -180,18 +186,24 @@ class ItemsDialog(QDialog):
         self.btn_plantilla = boton("Insertar plantilla", "file-plus")
         self.btn_plantilla.clicked.connect(self.insertar_plantilla)
         fila_notas.addWidget(self.btn_plantilla)
+        self.btn_ver_notas = self._boton_seccion(
+            fila_notas, lambda v: self.cuerpo_notas.setVisible(v) or self.btn_plantilla.setVisible(v))
         layout.addLayout(fila_notas)
+        self.cuerpo_notas = QWidget()
+        cuerpo = QVBoxLayout(self.cuerpo_notas)
+        cuerpo.setContentsMargins(0, 0, 0, 0)
         fila_titulo = QHBoxLayout()
         fila_titulo.addWidget(QLabel("Título del bloque:"))
         self.titulo_notas_edit = QLineEdit(titulo_notas)
         self.titulo_notas_edit.setPlaceholderText(db.TITULO_NOTAS)
         fila_titulo.addWidget(self.titulo_notas_edit, 1)
-        layout.addLayout(fila_titulo)
+        cuerpo.addLayout(fila_titulo)
         self.notas_edit = QPlainTextEdit()
         self.notas_edit.setPlainText(notas)
         self.notas_edit.setPlaceholderText("Alcance, exclusiones y condiciones que saldrán en el PDF…")
         self.notas_edit.setMinimumHeight(self.notas_edit.fontMetrics().lineSpacing() * 6 + 20)
-        layout.addWidget(self.notas_edit)
+        cuerpo.addWidget(self.notas_edit)
+        layout.addWidget(self.cuerpo_notas)
 
         # --- botones
         pie = QWidget()
@@ -285,8 +297,12 @@ class ItemsDialog(QDialog):
         for i, l in enumerate(self.lineas):
             cod = QTableWidgetItem()
             cod.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            desc = QTableWidgetItem(texto_rico.a_texto_plano(l.descripcion))
-            desc.setToolTip("Doble clic o F2 para editar el texto con formato" if self.editable else "")
+            plano = texto_rico.a_texto_plano(l.descripcion)
+            visible = self.btn_ver_texto.isChecked()
+            primera, _, resto = plano.partition("\n")
+            desc = QTableWidgetItem(plano if visible or not resto else primera + " …")
+            desc.setToolTip(plano if not visible and resto else
+                            "Doble clic o F2 para editar el texto con formato" if self.editable else "")
             desc.setIcon(iconos.icono("folder", estilo.AZUL, 18) if l.es_grupo else
                          iconos.icono("subitem", estilo.APAGADO, 18) if l.nivel == 1 else iconos.icono("file", estilo.APAGADO, 18))
             tipo = QTableWidgetItem()
@@ -510,6 +526,27 @@ class ItemsDialog(QDialog):
                     return
             l.modalidad, l.apu = calculo.SERVICIO, None
         self._render_lineas(fila)
+
+    def _boton_seccion(self, fila, mostrar):
+        """Botón que contrae o expande el contenido de una sección (empieza expandida)."""
+        b = boton("Contraer", "arrow-up", tooltip="Contraer o expandir esta sección")
+        b.setCheckable(True)
+        b.setChecked(True)
+
+        def alternar(visible):
+            b.setText("Contraer" if visible else "Expandir")
+            mostrar(visible)
+        b.toggled.connect(alternar)
+        fila.addWidget(b)
+        return b
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self.tabla.resizeRowsToContents)    # al mostrarse ya se conoce el ancho real de la descripción
+
+    def _alternar_texto(self, visible):
+        self.btn_ver_texto.setText("Ocultar texto" if visible else "Ver texto")
+        self._render_lineas(self._fila_actual())
 
     def editar_descripcion(self, fila=None):
         """Abre el editor con formato de la descripción del ítem (o grupo) seleccionado."""
