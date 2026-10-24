@@ -8,7 +8,7 @@ from PySide6.QtPdf import QPdfDocument
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QMessageBox, QScrollArea, QVBoxLayout, QWidget
 
 from app import estilo
-from app.ui_comun import boton
+from app.ui_comun import permitir_maximizar, boton
 
 ZOOMS = [50, 65, 80, 100, 125, 150, 200]
 PX_POR_PUNTO = 96 / 72          # la página se muestra a tamaño real de pantalla (96 ppp) × zoom
@@ -22,6 +22,7 @@ class VistaPreviaDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(titulo)
         self.resize(940, 860)
+        permitir_maximizar(self)
         self.pdf_bytes = b""
         self._buffer = None
         self.zoom = 100

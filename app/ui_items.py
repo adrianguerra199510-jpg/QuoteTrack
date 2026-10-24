@@ -10,7 +10,7 @@ from app import calculo, db, estilo, iconos, texto_rico
 from app.calculo import Apu, Cargo, Linea
 from app.ui_apu import AjustesApuDialog, ApuDialog
 from app.ui_biblioteca import SelectorConceptosDialog, combo_modalidad
-from app.ui_comun import boton, parsear_numero, tabla_estandar
+from app.ui_comun import boton, permitir_maximizar, parsear_numero, tabla_estandar
 from app.ui_texto import EditorTextoDialog
 from app.ui_vista_previa import vista_previa
 
@@ -34,6 +34,7 @@ class ItemsDialog(QDialog):
         self._invalidos = {}          # {("l"|"c", fila, columna): texto} con números mal escritos
         self.setWindowTitle(f"Cotización {numero}" + ("" if editable else " (solo lectura)"))
         self.resize(1120, 820)
+        permitir_maximizar(self)
 
         conn = db.get_connection()
         self.lineas = db.obtener_lineas(cotizacion_id, conn)

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 
 from app import calculo, estilo, iconos
 from app.calculo import Apu, ConfigApu, Indirecto, Insumo
-from app.ui_comun import boton, parsear_numero, tabla_estandar
+from app.ui_comun import permitir_maximizar, boton, parsear_numero, tabla_estandar
 
 DESC, UD, REND, COEF, PRECIO, COSTE = range(6)
 EDITAR = (QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed | QAbstractItemView.AnyKeyPressed)
@@ -252,6 +252,7 @@ class ApuDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Análisis de precio unitario" + ("" if editable else " (solo lectura)"))
         self.resize(900, 640)
+        permitir_maximizar(self)
         self.apu = apu.copia()
         lay = QVBoxLayout(self)
         lay.setContentsMargins(18, 16, 18, 14)

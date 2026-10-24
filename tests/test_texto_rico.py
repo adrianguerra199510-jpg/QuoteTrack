@@ -103,3 +103,12 @@ def test_contraer_costos_y_notas(cot, qapp):
     assert d.btn_ver_cargos.text() == "Expandir"
     d.btn_ver_notas.setChecked(True)
     assert d.cuerpo_notas.isVisible() and d.btn_plantilla.isVisible()
+
+
+def test_ventana_de_cotizacion_se_puede_maximizar(cot, qapp):
+    from PySide6.QtCore import Qt
+    d = ui_items.ItemsDialog(1, "COT-2026-0001", editable=True)
+    assert d.windowFlags() & Qt.WindowMaximizeButtonHint
+    d.show()
+    d.showMaximized()
+    assert d.isMaximized() or d.windowState() & Qt.WindowMaximized

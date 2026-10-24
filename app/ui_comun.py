@@ -1,5 +1,6 @@
 """Piezas de interfaz compartidas: botones con icono, encabezados de página, filtros y utilidades."""
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
     QPushButton, QStyledItemDelegate, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -180,3 +181,10 @@ class DescripcionDelegate(QStyledItemDelegate):
     def updateEditorGeometry(self, editor, option, index):
         editor.setGeometry(option.rect.x(), option.rect.y(), option.rect.width(),
                            max(option.rect.height(), 80))
+
+
+def permitir_maximizar(dlg) -> None:
+    """Agrega los botones de maximizar y minimizar a un diálogo (y F11 para pantalla completa)."""
+    dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
+    dlg.setSizeGripEnabled(True)
+    QShortcut(QKeySequence(Qt.Key_F11), dlg, activated=lambda: dlg.showNormal() if dlg.isFullScreen() else dlg.showFullScreen())

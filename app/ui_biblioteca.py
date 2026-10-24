@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from app import calculo, db, estilo, iconos
 from app.calculo import Apu, Concepto
 from app.ui_apu import ApuEditor
-from app.ui_comun import anchos_fijos, boton, encabezado_pagina, pagina, tabla_estandar
+from app.ui_comun import permitir_maximizar, anchos_fijos, boton, encabezado_pagina, pagina, tabla_estandar
 
 ICONO_MODALIDAD = {calculo.SERVICIO: "briefcase", calculo.OBRA: "tool"}
 NOMBRE_CORTO = {calculo.SERVICIO: "Servicio", calculo.OBRA: "Obra"}
@@ -40,6 +40,7 @@ class ConceptoDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Editar concepto" if concepto and concepto.id else "Nuevo concepto")
         self.resize(900, 720)
+        permitir_maximizar(self)
         self.concepto_id = concepto.id if concepto else None
         self.apu = concepto.apu.copia() if concepto and concepto.apu else Apu()
         conn = db.get_connection()
