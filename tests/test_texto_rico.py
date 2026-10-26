@@ -112,3 +112,35 @@ def test_ventana_de_cotizacion_se_puede_maximizar(cot, qapp):
     d.show()
     d.showMaximized()
     assert d.isMaximized() or d.windowState() & Qt.WindowMaximized
+
+
+def test_titulo_del_item(cot, tmp_path, qapp, monkeypatch, pdf_sin_comprimir):
+    d = ui_items.ItemsDialog(1, "COT-2026-0001", editable=True)
+    def aceptar(self):
+        self.titulo_edit.setText("Refuerzo de losas")
+        return 1
+    monkeypatch.setattr(EditorTextoDialog, "exec", aceptar)
+    d.editar_descripcion(0)
+    assert d.lineas[0].titulo == "Refuerzo de losas"
+    assert d.tabla.item(0, ui_items.COL_DESC).text().startswith("Refuerzo de losas\nMuro reforzado")
+    d.btn_ver_texto.setChecked(False)                  # texto oculto: queda solo el título
+    assert d.tabla.item(0, ui_items.COL_DESC).text() == "Refuerzo de losas …"
+    d._guardar_en_db()
+    conn = db.get_connection()
+    assert db.obtener_lineas(1, conn)[0].titulo == "Refuerzo de losas"
+    nuevo, _ = db.duplicar_cotizacion(1, conn)
+    assert db.obtener_lineas(nuevo, conn)[0].titulo == "Refuerzo de losas"
+    conn.close()
+    pdf.exportar_cotizacion(1, str(tmp_path / "c.pdf"))
+    assert b"Refuerzo de losas" in (tmp_path / "c.pdf").read_bytes()
+    word.exportar_cotizacion(1, str(tmp_path / "c.docx"))
+    celda = next(t for t in Document(str(tmp_path / "c.docx")).tables if t.rows[0].cells[0].text == "Ítem").rows[1].cells[1]
+    assert celda.paragraphs[0].text == "Refuerzo de losas" and celda.paragraphs[0].runs[0].bold
+
+
+def test_iconos_contraer_expandir(cot, qapp):
+    d = ui_items.ItemsDialog(1, "COT-2026-0001", editable=True)
+    d.btn_ver_cargos.setChecked(False)
+    assert d.btn_ver_cargos.text() == "Expandir"
+    d.btn_ver_cargos.setChecked(True)
+    assert d.btn_ver_cargos.text() == "Contraer"

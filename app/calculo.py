@@ -91,6 +91,7 @@ class Linea:
     unidad: str = ""
     modalidad: str = SERVICIO     # SERVICIO: precio manual · OBRA: precio calculado por el APU
     apu: Apu | None = None
+    titulo: str = ""              # título corto del ítem (sale en negrita sobre su descripción)
 
     @property
     def es_grupo(self) -> bool:

@@ -201,3 +201,11 @@ def resumen(s: str | None, largo: int = 90) -> str:
     """Una línea corta para tablas y mensajes."""
     plano = re.sub(r"\s+", " ", a_texto_plano(s)).strip()
     return plano if len(plano) <= largo else plano[:largo - 1].rstrip() + "…"
+
+
+def con_titulo(titulo: str | None, descripcion: str | None) -> str:
+    """Descripción con el título del ítem como primer párrafo en negrita (texto rico). Sin título, no cambia nada."""
+    titulo = (titulo or "").strip()
+    if not titulo:
+        return descripcion or ""
+    return serializar([Parrafo("p", [Tramo(titulo, negrita=True)])] + parsear(descripcion))

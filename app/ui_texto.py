@@ -2,7 +2,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QKeySequence, QTextCharFormat, QTextListFormat
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QTextEdit, QToolButton, QVBoxLayout,
+    QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QTextEdit, QToolButton, QVBoxLayout,
 )
 from PySide6.QtGui import QShortcut
 
@@ -41,12 +41,22 @@ def documento_a_texto(doc) -> str:
 class EditorTextoDialog(QDialog):
     """Ventana amplia y redimensionable, con barra de formato, para escribir descripciones largas."""
 
-    def __init__(self, texto="", titulo="Descripción del ítem", solo_lectura=False, parent=None):
+    def __init__(self, texto="", titulo="Descripción del ítem", solo_lectura=False, parent=None, titulo_item=None):
         super().__init__(parent)
         self.setWindowTitle(titulo)
         self.resize(760, 560)
         self.setSizeGripEnabled(True)
         layout = QVBoxLayout(self)
+
+        self.titulo_edit = None
+        if titulo_item is not None:
+            fila_t = QHBoxLayout()
+            fila_t.addWidget(QLabel("Título del ítem:"))
+            self.titulo_edit = QLineEdit(titulo_item)
+            self.titulo_edit.setPlaceholderText("Opcional: sale en negrita sobre la descripción")
+            self.titulo_edit.setReadOnly(solo_lectura)
+            fila_t.addWidget(self.titulo_edit, 1)
+            layout.addLayout(fila_t)
 
         barra = QHBoxLayout()
         barra.setSpacing(2)
@@ -93,6 +103,9 @@ class EditorTextoDialog(QDialog):
         b.setAutoRaise(False)
         b.clicked.connect(accion)
         return b
+
+    def titulo_item(self) -> str:
+        return self.titulo_edit.text().strip() if self.titulo_edit else ""
 
     def texto(self) -> str:
         return documento_a_texto(self.editor.document())

@@ -193,13 +193,13 @@ def _tabla_items(doc, lineas, tasa) -> None:
         c = fila.cells
         if l.es_grupo:
             _celda_texto(c[0], cods[i], negrita=True)
-            _celda_texto(c[1], l.descripcion, negrita=True)
+            _celda_texto(c[1], texto_rico.con_titulo(l.titulo, l.descripcion), negrita=True)
             _celda_texto(c[5], _dinero(imps[i]), der, negrita=True)
             for celda in c:
                 _sombrear(celda, GRIS_CLARO)
             continue
         _celda_texto(c[0], cods[i])
-        _celda_texto(c[1], l.descripcion, sangria_cm=0.25 if l.nivel == 1 else 0.0)
+        _celda_texto(c[1], texto_rico.con_titulo(l.titulo, l.descripcion), sangria_cm=0.25 if l.nivel == 1 else 0.0)
         if hay_exentos and not l.aplica_itbms:
             _texto(c[1].paragraphs[-1], " (exento de ITBMS)", tam=7, color="666666")
         _celda_texto(c[2], l.unidad, cen)

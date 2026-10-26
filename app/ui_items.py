@@ -298,7 +298,7 @@ class ItemsDialog(QDialog):
         for i, l in enumerate(self.lineas):
             cod = QTableWidgetItem()
             cod.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            plano = texto_rico.a_texto_plano(l.descripcion)
+            plano = texto_rico.a_texto_plano(texto_rico.con_titulo(l.titulo, l.descripcion))
             visible = self.btn_ver_texto.isChecked()
             primera, _, resto = plano.partition("\n")
             desc = QTableWidgetItem(plano if visible or not resto else primera + " …")
@@ -536,6 +536,7 @@ class ItemsDialog(QDialog):
 
         def alternar(visible):
             b.setText("Contraer" if visible else "Expandir")
+            b.setIcon(iconos.icono("arrow-up" if visible else "arrow-down", estilo.AZUL_OSCURO, 18))
             mostrar(visible)
         b.toggled.connect(alternar)
         fila.addWidget(b)
@@ -544,6 +545,10 @@ class ItemsDialog(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         QTimer.singleShot(0, self.tabla.resizeRowsToContents)    # al mostrarse ya se conoce el ancho real de la descripción
+
+    @staticmethod
+    def _sin_texto(l) -> bool:
+        return not (l.titulo or "").strip() and texto_rico.es_vacio(l.descripcion)
 
     def _alternar_texto(self, visible):
         self.btn_ver_texto.setText("Ocultar texto" if visible else "Ver texto")
@@ -556,9 +561,10 @@ class ItemsDialog(QDialog):
             return
         l = self.lineas[i]
         dlg = EditorTextoDialog(l.descripcion, f"Descripción · ítem {calculo.codigos(self.lineas)[i]}",
-                                not self.editable, self)
+                                not self.editable, self, titulo_item=l.titulo)
         if self._ejecutar(dlg) and self.editable:
             l.descripcion = dlg.texto()
+            l.titulo = dlg.titulo_item()
             self._render_lineas(i)
 
     @staticmethod
@@ -584,7 +590,7 @@ class ItemsDialog(QDialog):
                 "Este ítem es un servicio profesional (precio fijo). Cambia su tipo a «Mano de obra y material» "
                 "para analizar su precio unitario.")
             return
-        dlg = ApuDialog(texto_rico.a_texto_plano(l.descripcion), l.unidad, l.apu or Apu(), self.cfg, self.coef_ind, self.editable, self)
+        dlg = ApuDialog(texto_rico.a_texto_plano(texto_rico.con_titulo(l.titulo, l.descripcion)), l.unidad, l.apu or Apu(), self.cfg, self.coef_ind, self.editable, self)
         if dlg.exec() and self.editable:
             l.apu = dlg.apu
             self._render_lineas(i)
@@ -618,11 +624,11 @@ class ItemsDialog(QDialog):
             QMessageBox.information(self, "Biblioteca", "Selecciona un ítem (o un grupo) para guardarlo.")
             return
         if self.lineas[i].es_grupo:
-            candidatos = [(l, self.lineas[i].descripcion) for l in self.lineas[i + 1:i + 1 + self._hijos(i)]]
+            candidatos = [(l, texto_rico.con_titulo(self.lineas[i].titulo, self.lineas[i].descripcion)) for l in self.lineas[i + 1:i + 1 + self._hijos(i)]]
         else:
             g = self._padre(i)
-            candidatos = [(self.lineas[i], self.lineas[g].descripcion if self.lineas[i].nivel == 1 and g >= 0 else "")]
-        candidatos = [(l, texto_rico.a_texto_plano(cat)) for l, cat in candidatos if not texto_rico.es_vacio(l.descripcion)]
+            candidatos = [(self.lineas[i], texto_rico.con_titulo(self.lineas[g].titulo, self.lineas[g].descripcion) if self.lineas[i].nivel == 1 and g >= 0 else "")]
+        candidatos = [(l, texto_rico.a_texto_plano(cat)) for l, cat in candidatos if not self._sin_texto(l)]
         if not candidatos:
             QMessageBox.information(self, "Biblioteca", "Escribe primero la descripción del ítem.")
             return
@@ -769,11 +775,11 @@ class ItemsDialog(QDialog):
         cods = calculo.codigos(self.lineas)
         lineas = []
         for i, l in enumerate(self.lineas):
-            vacia = texto_rico.es_vacio(l.descripcion) and (l.es_grupo and not self._hijos(i) or
+            vacia = self._sin_texto(l) and (l.es_grupo and not self._hijos(i) or
                                            not l.es_grupo and l.precio == 0)
             if vacia:
                 continue
-            if texto_rico.es_vacio(l.descripcion):
+            if self._sin_texto(l):
                 return None, None, f"Falta la descripción del ítem {cods[i]}."
             lineas.append(l)
         cargos = []

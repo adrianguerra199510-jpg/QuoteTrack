@@ -230,6 +230,7 @@ def init_db() -> None:
     _agregar_columna(conn, "cotizacion_items", "unidad", "TEXT NOT NULL DEFAULT ''")
     _agregar_columna(conn, "cotizacion_items", "modalidad", "TEXT NOT NULL DEFAULT 'servicio'")
     _agregar_columna(conn, "cotizacion_items", "apu_base", "REAL NOT NULL DEFAULT 1")
+    _agregar_columna(conn, "cotizacion_items", "titulo", "TEXT NOT NULL DEFAULT ''")
     for cat in calculo.CATEGORIAS:
         _agregar_columna(conn, "cotizaciones", f"apu_coef_{cat}", "REAL")   # en %, NULL = valor por defecto
     # Migración: origen de los conceptos de la biblioteca (bases de datos de costos importadas)
@@ -267,7 +268,7 @@ def _insumos_de(filas) -> list[Insumo]:
 
 def obtener_lineas(cotizacion_id: int, conn: sqlite3.Connection) -> list[Linea]:
     filas = conn.execute(
-        "SELECT id, tipo, nivel, descripcion, cantidad, precio_unitario, aplica_itbms, unidad, modalidad, apu_base "
+        "SELECT id, tipo, nivel, descripcion, cantidad, precio_unitario, aplica_itbms, unidad, modalidad, apu_base, titulo "
         "FROM cotizacion_items WHERE cotizacion_id = ? ORDER BY id",
         (cotizacion_id,),
     ).fetchall()
@@ -278,7 +279,7 @@ def obtener_lineas(cotizacion_id: int, conn: sqlite3.Connection) -> list[Linea]:
             apu = Apu(f["apu_base"], _insumos_de(conn.execute(
                 "SELECT * FROM apu_insumos WHERE item_id = ? ORDER BY id", (f["id"],)).fetchall()))
         lineas.append(Linea(f["tipo"], f["nivel"], f["descripcion"], f["cantidad"], f["precio_unitario"],
-                            bool(f["aplica_itbms"]), f["unidad"], f["modalidad"], apu))
+                            bool(f["aplica_itbms"]), f["unidad"], f["modalidad"], apu, f["titulo"] or ""))
     return lineas
 
 
@@ -292,7 +293,7 @@ def obtener_cargos(cotizacion_id: int, conn: sqlite3.Connection) -> list[Cargo]:
 
 def obtener_items(cotizacion_id: int, conn: sqlite3.Connection) -> list[tuple[str, float, float]]:
     """Solo los ítems (sin encabezados de grupo) como (descripción, cantidad, precio)."""
-    return [(l.descripcion, l.cantidad, l.precio) for l in obtener_lineas(cotizacion_id, conn) if not l.es_grupo]
+    return [(texto_rico.a_texto_plano(texto_rico.con_titulo(l.titulo, l.descripcion)), l.cantidad, l.precio) for l in obtener_lineas(cotizacion_id, conn) if not l.es_grupo]
 
 
 def tasa_de_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> float:
@@ -369,9 +370,9 @@ def guardar_cotizacion(cotizacion_id: int, lineas, cargos, conn: sqlite3.Connect
     for l in lineas:
         cur = conn.execute(
             "INSERT INTO cotizacion_items (cotizacion_id, descripcion, cantidad, precio_unitario, tipo, nivel, "
-            "aplica_itbms, unidad, modalidad, apu_base) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "aplica_itbms, unidad, modalidad, apu_base, titulo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (cotizacion_id, l.descripcion, l.cantidad, l.precio, l.tipo, l.nivel, int(l.aplica_itbms),
-             l.unidad, l.modalidad, l.apu.base if l.apu else 1.0))
+             l.unidad, l.modalidad, l.apu.base if l.apu else 1.0, l.titulo or ""))
         if l.usa_apu and l.apu:
             conn.executemany(
                 "INSERT INTO apu_insumos (item_id, categoria, descripcion, unidad, rendimiento, coeficiente, precio, "
@@ -889,7 +890,7 @@ def costo_directo(c: Concepto) -> float:
 
 def concepto_desde_linea(l: Linea, categoria: str = "") -> Concepto:
     """Copia de un ítem de cotización para guardarlo en la biblioteca (con su análisis, si lo tiene)."""
-    return Concepto(None, texto_rico.a_texto_plano(l.descripcion), l.unidad, l.modalidad, 0.0 if l.usa_apu else l.precio, categoria,
+    return Concepto(None, texto_rico.a_texto_plano(texto_rico.con_titulo(l.titulo, l.descripcion)), l.unidad, l.modalidad, 0.0 if l.usa_apu else l.precio, categoria,
                     l.apu.copia() if l.usa_apu and l.apu else None)
 
 
