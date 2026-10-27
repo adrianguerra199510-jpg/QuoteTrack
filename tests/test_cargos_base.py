@@ -200,7 +200,7 @@ def test_grafica_del_resumen(qapp):
     assert nombres[0] == "Servicios profesionales" and "Administración" in nombres and "ITBMS" in nombres
     assert [m for _n, m in g.partes] == sorted((m for _n, m in g.partes), reverse=True)
     assert round(sum(m for _n, m in g.partes), 2) == g.total          # los componentes suman el total
-    assert dlg.pestanas.count() == 2
+    assert dlg.divisor.widget(1) is dlg.tabla                          # gráfica arriba y tabla debajo, una sola vista
     dlg.show()
-    dlg.pestanas.setCurrentIndex(1)
+    assert g.isVisible() and dlg.tabla.isVisible() and g.mapTo(dlg, g.rect().topLeft()).y() < dlg.tabla.mapTo(dlg, dlg.tabla.rect().topLeft()).y()
     assert not dlg.grab().isNull()                                    # se dibuja sin errores

@@ -4,7 +4,7 @@ from dataclasses import replace
 from PySide6.QtCore import QRectF, QTimer, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QRadioButton, QTabWidget, QToolTip, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
+    QApplication, QCheckBox, QRadioButton, QSplitter, QToolTip, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -73,7 +73,7 @@ class GraficaResumen(QWidget):
     y su porcentaje escritos junto a la barra. Un solo tono (es magnitud, no identidad) y fondo claro."""
 
     COLOR = QColor("#2A78D6")
-    ALTO_FILA, ANCHO_ETIQUETA = 30, 250
+    ALTO_FILA, ANCHO_ETIQUETA = 26, 250
 
     def __init__(self, filas, parent=None):
         super().__init__(parent)
@@ -146,7 +146,7 @@ class ResumenDialog(QDialog):
     def __init__(self, filas, titulo="Resumen de la cotización", parent=None):
         super().__init__(parent)
         self.setWindowTitle(titulo)
-        self.resize(900, 780)
+        self.resize(900, 920)
         permitir_maximizar(self)
         self.filas = filas
         lay = QVBoxLayout(self)
@@ -188,10 +188,12 @@ class ResumenDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
         scroll.setWidget(self.grafica)
-        self.pestanas = QTabWidget()
-        self.pestanas.addTab(self.tabla, "Tabla")
-        self.pestanas.addTab(scroll, "Gráfica")
-        lay.addWidget(self.pestanas, 1)
+        self.divisor = QSplitter(Qt.Vertical)           # gráfica arriba y tabla debajo, en la misma vista
+        self.divisor.addWidget(scroll)
+        self.divisor.addWidget(self.tabla)
+        self.divisor.setChildrenCollapsible(False)
+        self.divisor.setSizes([min(self.grafica.minimumHeight() + 6, 330), 520])
+        lay.addWidget(self.divisor, 1)
         fila = QHBoxLayout()
         self.btn_copiar = boton("Copiar", "copy", tooltip="Copia el resumen al portapapeles (para pegarlo en un correo o en Excel)")
         self.btn_copiar.clicked.connect(self.copiar)
