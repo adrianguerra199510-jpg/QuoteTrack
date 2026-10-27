@@ -431,6 +431,19 @@ def duplicar_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> tuple[i
     return nuevo, numero
 
 
+def cambiar_cliente_cotizacion(cotizacion_id: int, cliente_id: int, conn: sqlite3.Connection) -> None:
+    """Cambia el cliente de una cotización; solo se permite mientras está en borrador."""
+    cot = conn.execute("SELECT estado FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()
+    if cot is None:
+        raise ValueError("La cotización no existe.")
+    if cot["estado"] != "borrador":
+        raise ValueError("Solo se puede cambiar el cliente de una cotización en borrador.")
+    if conn.execute("SELECT 1 FROM clientes WHERE id = ?", (cliente_id,)).fetchone() is None:
+        raise ValueError("El cliente no existe.")
+    conn.execute("UPDATE cotizaciones SET cliente_id = ? WHERE id = ?", (cliente_id, cotizacion_id))
+    conn.commit()
+
+
 def eliminar_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> str:
     """Elimina la cotización con sus ítems, costos e indirectos; devuelve su número. No permite eliminar una
     que ya tiene factura (la factura conserva el vínculo con su cotización de origen)."""

@@ -126,14 +126,30 @@ class FiltroBar(QHBoxLayout):
         self.busqueda.setPlaceholderText("Buscar por cliente o número…")
         self.busqueda.setClearButtonEnabled(True)
         self.busqueda.addAction(iconos.icono("search", estilo.APAGADO, 16), QLineEdit.LeadingPosition)
+        self.cliente = QComboBox()
+        self.cliente.setMinimumWidth(200)
+        self.cliente.addItem("Todos los clientes", None)
         self.estado = QComboBox()
         self.estado.addItem("Todos los estados", None)
         for e in estados:
             self.estado.addItem(e, e)
         self.addWidget(self.busqueda, 1)
+        self.addWidget(self.cliente)
         self.addWidget(self.estado)
+        self.cliente.currentIndexChanged.connect(lambda *_: al_cambiar())
         self.busqueda.textChanged.connect(lambda *_: al_cambiar())
         self.estado.currentIndexChanged.connect(lambda *_: al_cambiar())
+
+    def cargar_clientes(self, clientes) -> None:
+        """Rellena el filtro de cliente con filas (id, nombre) conservando la selección; no dispara el filtro."""
+        actual = self.cliente.currentData()
+        self.cliente.blockSignals(True)
+        self.cliente.clear()
+        self.cliente.addItem("Todos los clientes", None)
+        for cl in clientes:
+            self.cliente.addItem(cl["nombre"], cl["id"])
+        self.cliente.setCurrentIndex(max(self.cliente.findData(actual), 0))
+        self.cliente.blockSignals(False)
 
     def clausula(self, alias, columna_estado):
         """Devuelve (SQL 'WHERE ...', parámetros); `alias` es el de la tabla principal."""
@@ -142,6 +158,9 @@ class FiltroBar(QHBoxLayout):
         if texto:
             condiciones.append(f"(cl.nombre LIKE ? OR {alias}.numero LIKE ?)")
             params += [f"%{texto}%"] * 2
+        if self.cliente.currentData() is not None:
+            condiciones.append("cl.id = ?")
+            params.append(self.cliente.currentData())
         if self.estado.currentData():
             condiciones.append(f"{alias}.{columna_estado} = ?")
             params.append(self.estado.currentData())

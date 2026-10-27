@@ -5,7 +5,7 @@ from PySide6.QtCore import QSize, Qt, QDate
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame,
-    QHBoxLayout,
+    QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QStackedWidget,
     QMenu, QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -200,28 +200,32 @@ class CotizacionesTab(QWidget):
         acciones = QHBoxLayout()
         self.btn_items = boton("Abrir / Editar", "edit")
         self.btn_items.clicked.connect(self.editar_items)
-        acciones.addWidget(self.btn_items)
-        acciones.addStretch()
-        acciones.addWidget(QLabel("Cambiar estado a:"))
-        self.estado_combo = QComboBox()
-        self.estado_combo.setMinimumWidth(120)
-        acciones.addWidget(self.estado_combo)
-        self.btn_estado = boton("Aplicar", "check")
-        self.btn_estado.clicked.connect(self.cambiar_estado)
-        acciones.addWidget(self.btn_estado)
-        self.btn_factura = boton("Generar factura", "receipt")
-        self.btn_factura.clicked.connect(self.generar_factura)
-        acciones.addWidget(self.btn_factura)
+        self.btn_cliente = boton("Cambiar cliente", "users", tooltip="Solo disponible mientras la cotización está en borrador")
+        self.btn_cliente.clicked.connect(self.cambiar_cliente)
         self.btn_vista = boton("Vista previa", "eye", tooltip="Ver cómo saldrá la cotización antes de exportarla")
         self.btn_vista.clicked.connect(self.vista_previa)
-        acciones.addWidget(self.btn_vista)
         self.btn_pdf = boton("Exportar PDF", "download")
         self.btn_pdf.clicked.connect(self.exportar_pdf)
-        acciones.addWidget(self.btn_pdf)
         self.btn_word = boton("Exportar Word", "word")
         self.btn_word.clicked.connect(self.exportar_word)
-        acciones.addWidget(self.btn_word)
+        for b_ in (self.btn_items, self.btn_cliente, self.btn_vista, self.btn_pdf, self.btn_word):
+            acciones.addWidget(b_)
+        acciones.addStretch()
         lay.addLayout(acciones)
+
+        estados = QHBoxLayout()
+        estados.addWidget(QLabel("Cambiar estado a:"))
+        self.estado_combo = QComboBox()
+        self.estado_combo.setMinimumWidth(120)
+        estados.addWidget(self.estado_combo)
+        self.btn_estado = boton("Aplicar", "check")
+        self.btn_estado.clicked.connect(self.cambiar_estado)
+        estados.addWidget(self.btn_estado)
+        self.btn_factura = boton("Generar factura", "receipt")
+        self.btn_factura.clicked.connect(self.generar_factura)
+        estados.addWidget(self.btn_factura)
+        estados.addStretch()
+        lay.addLayout(estados)
 
         self.refrescar()
 
@@ -235,6 +239,7 @@ class CotizacionesTab(QWidget):
         idx = self.cliente_combo.findData(cliente_actual)
         if idx >= 0:
             self.cliente_combo.setCurrentIndex(idx)
+        self.filtro.cargar_clientes(clientes)
 
         empresa_actual = self.empresa_combo.currentData() or db.empresa_predeterminada_id(conn)
         self.empresa_combo.clear()
@@ -288,10 +293,38 @@ class CotizacionesTab(QWidget):
         self.estado_combo.setEnabled(self.estado_combo.count() > 0)
         self.btn_factura.setEnabled(estado == "aprobada")
         self.btn_items.setEnabled(estado is not None)
+        self.btn_cliente.setEnabled(estado == "borrador")
         self.btn_pdf.setEnabled(estado is not None)
         self.btn_word.setEnabled(estado is not None)
         self.btn_vista.setEnabled(estado is not None)
         self.btn_items.setText("Abrir / Editar" if estado == "borrador" or estado is None else "Ver detalle")
+
+    @staticmethod
+    def _elegir_cliente(parent, clientes, actual):
+        """Pide el nuevo cliente; devuelve su id o None si se cancela."""
+        nombres = [c["nombre"] for c in clientes]
+        nombre, ok = QInputDialog.getItem(parent, "Cambiar cliente", "Cliente de la cotización:", nombres,
+                                          max(next((i for i, c in enumerate(clientes) if c["id"] == actual), 0), 0), False)
+        return clientes[nombres.index(nombre)]["id"] if ok else None
+
+    def cambiar_cliente(self):
+        sel = self._seleccionada()
+        if not sel:
+            return
+        conn = db.get_connection()
+        try:
+            clientes = conn.execute("SELECT id, nombre FROM clientes ORDER BY nombre").fetchall()
+            actual = conn.execute("SELECT cliente_id FROM cotizaciones WHERE id = ?", (sel[0],)).fetchone()["cliente_id"]
+            nuevo = self._elegir_cliente(self, clientes, actual)
+            if nuevo is None or nuevo == actual:
+                return
+            db.cambiar_cliente_cotizacion(sel[0], nuevo, conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Cambiar cliente", str(e))
+            return
+        finally:
+            conn.close()
+        self.refrescar()
 
     def cambiar_estado(self):
         if self.estado_combo.currentText():
@@ -331,6 +364,8 @@ class CotizacionesTab(QWidget):
         menu.addAction(icono("edit"), "Abrir / Editar" if estado == "borrador" else "Ver detalle",
                        lambda *_: self.editar_items())
         menu.addAction(icono("eye"), "Vista previa", lambda *_: self.vista_previa())
+        menu.addAction(icono("users"), "Cambiar cliente…", lambda *_: self.cambiar_cliente()).setEnabled(
+            estado == "borrador")
         menu.addSeparator()
         siguientes = db.TRANSICIONES_COTIZACION.get(estado, [])
         sub = menu.addMenu(icono("check"), "Cambiar estado a")
@@ -536,6 +571,7 @@ class FacturasTab(QWidget):
     def refrescar(self):
         from PySide6.QtGui import QBrush, QColor
         conn = db.get_connection()
+        self.filtro.cargar_clientes(conn.execute("SELECT id, nombre FROM clientes ORDER BY nombre").fetchall())
         where, params = self.filtro.clausula("f", "estado_pago")
         filas = conn.execute(f"""
             SELECT f.id, f.numero, cl.nombre AS cliente, e.nombre AS empresa, f.fecha, f.estado_pago,

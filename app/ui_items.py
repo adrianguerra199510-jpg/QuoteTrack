@@ -46,6 +46,8 @@ class ItemsDialog(QDialog):
         titulo_notas = db.obtener_titulo_notas("cotizaciones", cotizacion_id, conn)
         proyecto = db.obtener_proyecto(cotizacion_id, conn)
         empresas = db.listar_empresas(conn)
+        clientes = conn.execute("SELECT id, nombre FROM clientes ORDER BY nombre").fetchall()
+        cliente_id = conn.execute("SELECT cliente_id FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()["cliente_id"]
         empresa_actual = db.empresa_de_cotizacion(cotizacion_id, conn)
         self.tasa_guardada = db.tasa_de_cotizacion(cotizacion_id, conn)
         self.cfg = db.obtener_config_apu(cotizacion_id, conn)      # coeficientes e indirectos del APU
@@ -77,6 +79,13 @@ class ItemsDialog(QDialog):
         idx = self.empresa_combo.findData(empresa_actual["id"]) if empresa_actual else -1
         self.empresa_combo.setCurrentIndex(max(idx, 0))
         self.empresa_combo.currentIndexChanged.connect(lambda *_: self._cambio_empresa())
+        self.cliente_combo = QComboBox()
+        for cl in clientes:
+            self.cliente_combo.addItem(cl["nombre"], cl["id"])
+        self.cliente_combo.setCurrentIndex(max(self.cliente_combo.findData(cliente_id), 0))
+        self._cliente_inicial = cliente_id
+        self.cliente_combo.setEnabled(editable)            # el editor solo es editable con la cotización en borrador
+        form.addRow("Cliente:", self.cliente_combo)
         form.addRow("Proyecto:", self.proyecto_edit)
         form.addRow("Empresa que cotiza:", self.empresa_combo)
         layout.addLayout(form)
@@ -902,6 +911,9 @@ class ItemsDialog(QDialog):
             QMessageBox.warning(self, "Datos inválidos", error)
             return False
         conn = db.get_connection()
+        if self.cliente_combo.currentData() is not None and self.cliente_combo.currentData() != self._cliente_inicial:
+            db.cambiar_cliente_cotizacion(self.cotizacion_id, self.cliente_combo.currentData(), conn)
+            self._cliente_inicial = self.cliente_combo.currentData()
         if self.empresa_combo.currentData() is not None:
             db.cambiar_empresa_cotizacion(self.cotizacion_id, self.empresa_combo.currentData(), conn)
         db.guardar_cotizacion(self.cotizacion_id, lineas, cargos, conn, tasa=self.tasa, cfg=self.cfg)
