@@ -94,7 +94,7 @@ def test_notas_de_factura_editables(conn):
     db.cambiar_estado_cotizacion(1, "enviada", conn)
     db.cambiar_estado_cotizacion(1, "aprobada", conn)
     db.generar_factura(1, conn)
-    assert db.obtener_notas_factura(1, conn) == "Original"
+    assert "Banco General" in db.obtener_notas_factura(1, conn)
     db.guardar_notas_factura(1, "Editada en factura", conn)
     assert db.obtener_notas_factura(1, conn) == "Editada en factura"
     assert db.obtener_notas(1, conn) == "Original"

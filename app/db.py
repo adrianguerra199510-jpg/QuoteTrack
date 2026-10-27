@@ -622,7 +622,8 @@ def generar_factura(cotizacion_id: int, conn: sqlite3.Connection, porcentaje: fl
         "INSERT INTO facturas (numero, cotizacion_id, cliente_id, fecha, estado_pago, total, notas, empresa_id, "
         "titulo_notas, concepto, porcentaje) VALUES (?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, ?, ?)",
         (numero, cotizacion_id, cot["cliente_id"], date.today().isoformat(), monto,
-         cot["notas"] or "", cot["empresa_id"], cot["titulo_notas"] or "", concepto.strip(), pct),
+         notas_de_factura(cot, monto, r["total"], round(r["saldo"] - monto, 2), r["facturas"] > 0, conn),
+         cot["empresa_id"], obtener_config("titulo_notas_factura", conn, TITULO_NOTAS_FACTURA), concepto.strip(), pct),
     )
     conn.commit()
     return numero
@@ -675,6 +676,20 @@ VALIDEZ DE LA OFERTA
 
 OBSERVACIONES
 • Si la estructura o cimentación de alguna torre difiere de la torre tipo, el precio de esa torre se reajustará."""
+
+TITULO_NOTAS_FACTURA = "Términos de pago"
+
+PLANTILLA_FACTURA_INICIAL = """{descripcion_pago} Este pago deberá realizarse en un plazo máximo de 3 días hábiles a partir de la fecha de emisión de esta factura a través de cualquiera de las siguientes opciones:
+
+• ACH / Transferencia Bancaria:
+   • Banco: Banco General
+   • Tipo de Cuenta: Cuenta de Ahorros
+   • Número de Cuenta: 0439995725053
+   • Titular: JOSE ADRIAN GUERRA ESPINOSA
+• Yappy:
+   • Número: 6867-4104 (JOSE ADRIAN GUERRA ESPINOSA)
+
+Una vez recibido y verificado el importe, {cierre}"""
 
 # Valores por defecto de la configuración (clave -> valor)
 CONFIG_DEFECTOS = {
@@ -986,6 +1001,48 @@ def obtener_notas(cotizacion_id: int, conn: sqlite3.Connection) -> str:
 def guardar_notas(cotizacion_id: int, notas: str, conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE cotizaciones SET notas = ? WHERE id = ?", (notas, cotizacion_id))
     conn.commit()
+
+
+def obtener_plantilla_factura(conn: sqlite3.Connection) -> str:
+    """Plantilla de notas (términos de pago) con que nace cada factura. Admite {descripcion_pago}, {cierre},
+    {monto}, {total}, {saldo}, {porcentaje} y {cotizacion}."""
+    return obtener_config("plantilla_notas_factura", conn, PLANTILLA_FACTURA_INICIAL)
+
+
+def guardar_plantilla_factura(texto: str, conn: sqlite3.Connection) -> None:
+    guardar_config("plantilla_notas_factura", texto, conn)
+
+
+def restaurar_plantilla_factura(conn: sqlite3.Connection) -> str:
+    conn.execute("DELETE FROM configuracion WHERE clave = 'plantilla_notas_factura'")
+    conn.commit()
+    return PLANTILLA_FACTURA_INICIAL
+
+
+def notas_de_factura(cot, monto: float, total: float, saldo_despues: float, hay_previas: bool,
+                     conn: sqlite3.Connection) -> str:
+    """Notas iniciales de una factura: la plantilla de términos de pago con los importes de esta factura."""
+    dinero = lambda v: f"B/. {v:,.2f}"
+    liquida = saldo_despues <= 0.005
+    if liquida and not hay_previas:
+        descripcion = (f"El presente pago por la cantidad de {dinero(monto)} corresponde al pago total de los servicios "
+                       f"prestados, por el monto acordado de {dinero(total)}.")
+    elif liquida:
+        descripcion = (f"El presente pago por la cantidad de {dinero(monto)} corresponde a la cancelación del saldo "
+                       f"pendiente y liquidación total del monto final acordado de {dinero(total)} por los servicios prestados.")
+    else:
+        descripcion = (f"El presente pago por la cantidad de {dinero(monto)} corresponde a un abono del "
+                       f"{monto / total * 100:.2f}% del monto total acordado de {dinero(total)} por los servicios "
+                       f"prestados. El saldo pendiente tras este pago será de {dinero(saldo_despues)}.".replace(".00%", "%"))
+    cierre = ("la obligación contractual quedará formalmente finiquitada." if liquida else
+              f"el importe se aplicará a la cotización {cot['numero']} y se actualizará el saldo pendiente.")
+    valores = {"descripcion_pago": descripcion, "cierre": cierre, "monto": dinero(monto), "total": dinero(total),
+               "saldo": dinero(saldo_despues), "porcentaje": f"{monto / total * 100:.2f}".rstrip("0").rstrip("."),
+               "cotizacion": cot["numero"]}
+    texto = obtener_plantilla_factura(conn)
+    for clave, valor in valores.items():
+        texto = texto.replace("{" + clave + "}", valor)
+    return texto
 
 
 def restaurar_plantilla_notas(conn: sqlite3.Connection) -> str:

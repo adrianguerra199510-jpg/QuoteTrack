@@ -78,7 +78,7 @@ def de_factura(factura_id: int, mostrar_estado: bool | None = None) -> Documento
         extra.append(("Cotización de origen", cot["numero"]))
     concepto = fac["concepto"] or ""
     if fac["porcentaje"] is not None and concepto and fac["porcentaje"] < 99.9999:
-        concepto = f"{concepto} — {fac['porcentaje']:g}% del total de la cotización"
+        concepto = f"{concepto} — {round(fac['porcentaje'], 2):g}% del total de la cotización"
     return Documento("FACTURA", fac["numero"], fac["fecha"], cliente, empresa, extra, None, totales, fac["notas"],
                      fac["titulo_notas"] or "", concepto, resumen)
 

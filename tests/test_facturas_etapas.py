@@ -136,3 +136,45 @@ def test_generar_desde_la_pestana(conn, qapp, monkeypatch):
     f = w.facturas_tab
     f.refrescar()
     assert f.tabla.rowCount() == 2 and {f.tabla.item(i, 7).text() for i in range(2)} == {"Abono 1 (30%)", "Saldo final"}
+
+
+def test_notas_de_cada_factura_por_etapa(cot):
+    db.generar_factura(1, cot, porcentaje=30)
+    db.generar_factura(1, cot, porcentaje=70)
+    abono, final = [f["notas"] for f in facturas(cot)]
+    assert "abono del 30%" in abono and "B/. 321.00" in abono and "saldo pendiente tras este pago será de B/. 749.00" in abono
+    assert "se aplicará a la cotización COT-2026-0001" in abono
+    assert "cancelación del saldo pendiente y liquidación total del monto final acordado de B/. 1,070.00" in final
+    assert "formalmente finiquitada" in final and "Banco General" in final and "Yappy" in final
+    assert all(f["titulo_notas"] == "Términos de pago" for f in facturas(cot))
+
+
+def test_plantilla_de_facturas_editable(cot):
+    db.guardar_plantilla_factura("Pagar {monto} de {total} ({porcentaje}%) ref {cotizacion}", cot)
+    db.generar_factura(1, cot, porcentaje=25)
+    assert facturas(cot)[0]["notas"] == "Pagar B/. 267.50 de B/. 1,070.00 (25%) ref COT-2026-0001"
+    assert db.restaurar_plantilla_factura(cot) == db.PLANTILLA_FACTURA_INICIAL
+
+
+def test_pdf_y_word_con_viñetas_anidadas(cot, tmp_path):
+    db.generar_factura(1, cot)
+    fid = facturas(cot)[0]["id"]
+    word.exportar_factura(fid, str(tmp_path / "f.docx"))
+    d = Document(str(tmp_path / "f.docx"))
+    estilos = {p.text: p.style.name for p in d.paragraphs}
+    assert estilos["ACH / Transferencia Bancaria:"] == "List Bullet"
+    assert estilos["Banco: Banco General"] == "List Bullet 2"
+    pdf.exportar_factura(fid, str(tmp_path / "f.pdf"))
+
+
+def test_configuracion_edita_plantilla_de_facturas(conn, qapp, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a: None))
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a: QMessageBox.Yes))
+    w = ui_main.MainWindow()
+    cfg = w.configuracion_tab
+    cfg.plantilla_factura_edit.setPlainText("Texto propio {monto}")
+    cfg.guardar_plantilla_factura()
+    assert db.obtener_plantilla_factura(conn) == "Texto propio {monto}"
+    cfg.restaurar_plantilla_factura()
+    assert db.obtener_plantilla_factura(conn) == db.PLANTILLA_FACTURA_INICIAL

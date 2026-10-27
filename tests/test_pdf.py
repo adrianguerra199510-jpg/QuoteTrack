@@ -75,12 +75,17 @@ def test_opcion_de_configuracion_muestra_estado(conn, tmp_path, pdf_sin_comprimi
     assert "Estado" in contenido(ruta) and "borrador" in contenido(ruta)
 
 
-def test_factura_imprime_notas_copiadas(conn, tmp_path, pdf_sin_comprimir):
+def test_factura_imprime_notas_y_titulo(conn, tmp_path, pdf_sin_comprimir):
     db.guardar_notas(1, "Condicion de factura", conn)
     db.cambiar_estado_cotizacion(1, "enviada", conn)
     db.cambiar_estado_cotizacion(1, "aprobada", conn)
     db.generar_factura(1, conn)
     ruta = tmp_path / "f.pdf"
+    pdf.exportar_factura(1, str(ruta))
+    txt = contenido(ruta)
+    assert "rminos de pago" in txt and "Banco General" in txt           # título y plantilla de pago de la factura
+    db.guardar_notas_factura(1, "Condicion de factura", conn)
+    db.guardar_titulo_notas("facturas", 1, "", conn)                     # sin título propio: el predeterminado
     pdf.exportar_factura(1, str(ruta))
     txt = contenido(ruta)
     assert "Alcance, exclusiones y condiciones" in txt and "Condicion de factura" in txt

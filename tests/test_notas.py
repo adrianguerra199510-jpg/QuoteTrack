@@ -50,11 +50,14 @@ def test_migracion_base_antigua(tmp_path, monkeypatch):
     assert c.execute("SELECT total FROM cotizaciones").fetchone()["total"] == 10
 
 
-def test_factura_copia_notas(conn):
+def test_factura_nace_con_terminos_de_pago(conn):
     db.guardar_notas(1, "Validez 15 días\nPago 50%/50%", conn)
     aprobar(conn)
     db.generar_factura(1, conn)
-    assert conn.execute("SELECT notas FROM facturas").fetchone()["notas"] == "Validez 15 días\nPago 50%/50%"
+    f = conn.execute("SELECT notas, titulo_notas FROM facturas").fetchone()
+    assert f["titulo_notas"] == "Términos de pago"
+    assert "corresponde al pago total" in f["notas"] and "Banco General" in f["notas"]
+    assert "Validez 15 días" not in f["notas"]            # ya no copia el alcance de la cotización
 
 
 def test_plantilla_por_defecto_y_editable(conn):

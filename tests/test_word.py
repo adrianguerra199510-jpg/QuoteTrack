@@ -108,7 +108,7 @@ def test_factura_sin_tabla_de_items_con_totales_y_origen(obra, tmp_path):
     assert "FACTURA" in t and "FAC-2026-0001" in t and "Cotización de origen: COT-2026-0001" in t
     assert "Fecha de pago: 2026-02-01" in t and "B/. 408.45" in t and "Administración (10%):" in t
     assert not any(tb.rows[0].cells[0].text == "Ítem" for tb in doc.tables)
-    assert "Obra civil según planos." in t                       # notas copiadas a la factura
+    assert "Términos de pago" in t and "Banco General" in t     # la factura nace con la plantilla de pago
 
 
 def test_logo_de_la_empresa(conn, tmp_path, qapp):

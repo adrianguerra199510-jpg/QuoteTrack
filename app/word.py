@@ -252,7 +252,8 @@ def _notas(doc, notas, titulo="") -> None:
         if not texto:
             continue
         if texto[0] in "•-" and len(texto) > 1 and texto[1] in " \t":
-            p = doc.add_paragraph(texto[1:].strip(), style="List Bullet")
+            sangrada = len(linea) - len(linea.lstrip()) >= 2
+            p = doc.add_paragraph(texto[1:].strip(), style="List Bullet 2" if sangrada else "List Bullet")
             p.paragraph_format.space_after = Pt(1)
         elif texto.isupper():
             p = _parrafo(doc, texto, negrita=True, antes=8, despues=2)
@@ -269,7 +270,7 @@ def _construir(d: documento.Documento, ruta: str) -> None:
     normal = doc.styles["Normal"]
     normal.font.name, normal.font.size = FUENTE, Pt(10)
     normal.element.rPr.rFonts.set(qn("w:eastAsia"), FUENTE)
-    doc.styles["List Bullet"].font.name = FUENTE
+    doc.styles["List Bullet"].font.name = doc.styles["List Bullet 2"].font.name = FUENTE
     doc.core_properties.title = f"{d.titulo.title()} {d.numero}"
     doc.core_properties.author = d.empresa["nombre"] if d.empresa else ""
 

@@ -65,6 +65,7 @@ def _estilos():
     estilos.add(ParagraphStyle("Notas", parent=estilos["Normal"], leading=14, spaceAfter=0))
     estilos.add(ParagraphStyle("NotasSeccion", parent=estilos["Notas"], keepWithNext=1))
     estilos.add(ParagraphStyle("NotasViñeta", parent=estilos["Notas"], leftIndent=14, bulletIndent=2))
+    estilos.add(ParagraphStyle("NotasViñeta2", parent=estilos["Notas"], leftIndent=28, bulletIndent=16))
     return estilos
 
 
@@ -79,10 +80,12 @@ def _bloque_notas(estilos, notas, titulo=""):
     ]
     for linea in notas.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         texto = linea.strip()
+        sangrada = len(linea) - len(linea.lstrip()) >= 2          # viñeta de segundo nivel (empieza con espacios)
         if not texto:
             elementos.append(Spacer(1, 0.25 * cm))
         elif texto[0] in "•-" and len(texto) > 1 and texto[1] in " \t":
-            elementos.append(Paragraph(_esc(texto[1:].strip()), estilos["NotasViñeta"], bulletText="•"))
+            elementos.append(Paragraph(_esc(texto[1:].strip()), estilos["NotasViñeta2" if sangrada else "NotasViñeta"],
+                                       bulletText="–" if sangrada else "•"))
         elif texto.isupper():  # encabezado de sección (ALCANCE, EXCLUSIONES…): no se deja solo al pie
             elementos.append(Paragraph(f"<b>{_esc(texto)}</b>", estilos["NotasSeccion"]))
         else:

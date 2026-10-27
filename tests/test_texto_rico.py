@@ -67,7 +67,7 @@ def test_titulo_notas_factura_y_cotizacion(cot, tmp_path, pdf_sin_comprimir):
     db.cambiar_estado_cotizacion(1, "aprobada", cot)
     num = db.generar_factura(1, cot)
     fid = cot.execute("SELECT id FROM facturas WHERE numero = ?", (num,)).fetchone()["id"]
-    assert db.obtener_titulo_notas("facturas", fid, cot) == "Condiciones de pago"      # se copia a la factura
+    assert db.obtener_titulo_notas("facturas", fid, cot) == "Términos de pago"          # título propio de las facturas
     db.guardar_titulo_notas("facturas", fid, "Términos de la factura", cot)
     pdf.exportar_factura(fid, str(tmp_path / "f.pdf"))
     assert b"T\xc3\xa9rminos de la factura" in (tmp_path / "f.pdf").read_bytes() or b"rminos de la factura" in (tmp_path / "f.pdf").read_bytes()

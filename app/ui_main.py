@@ -6,7 +6,7 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame,
     QHBoxLayout, QInputDialog,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QStackedWidget,
+    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QStackedWidget, QTabWidget,
     QMenu, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -857,14 +857,18 @@ class ConfiguracionTab(QWidget):
         cl.addLayout(fila)
         lay.addWidget(card)
 
-        sec = QLabel("Plantilla de notas por defecto")
+        sec = QLabel("Plantillas de notas por defecto")
         sec.setObjectName("seccion")
         lay.addWidget(sec)
+        pestanas = QTabWidget()
+        # --- cotizaciones
+        pag = QWidget()
+        pl = QVBoxLayout(pag)
         sub = QLabel("Se inserta con el botón «Insertar plantilla» al editar una cotización.")
         sub.setObjectName("subtitulo")
-        lay.addWidget(sub)
+        pl.addWidget(sub)
         self.plantilla_edit = QPlainTextEdit()
-        lay.addWidget(self.plantilla_edit, 1)
+        pl.addWidget(self.plantilla_edit, 1)
         fila = QHBoxLayout()
         self.btn_plantilla = boton("Guardar plantilla", "save", "primario")
         self.btn_plantilla.clicked.connect(self.guardar_plantilla)
@@ -873,7 +877,29 @@ class ConfiguracionTab(QWidget):
         fila.addWidget(self.btn_plantilla)
         fila.addWidget(self.btn_restaurar)
         fila.addStretch()
-        lay.addLayout(fila)
+        pl.addLayout(fila)
+        pestanas.addTab(pag, "Cotizaciones")
+        # --- facturas
+        pag = QWidget()
+        pl = QVBoxLayout(pag)
+        sub = QLabel("Notas con que nace cada factura (términos y datos de pago). Se rellenan solas: "
+                     "{descripcion_pago}, {cierre}, {monto}, {total}, {saldo}, {porcentaje} y {cotizacion}.")
+        sub.setObjectName("subtitulo")
+        sub.setWordWrap(True)
+        pl.addWidget(sub)
+        self.plantilla_factura_edit = QPlainTextEdit()
+        pl.addWidget(self.plantilla_factura_edit, 1)
+        fila = QHBoxLayout()
+        self.btn_plantilla_factura = boton("Guardar plantilla", "save", "primario")
+        self.btn_plantilla_factura.clicked.connect(self.guardar_plantilla_factura)
+        self.btn_restaurar_factura = boton("Restaurar plantilla original", "refresh")
+        self.btn_restaurar_factura.clicked.connect(self.restaurar_plantilla_factura)
+        fila.addWidget(self.btn_plantilla_factura)
+        fila.addWidget(self.btn_restaurar_factura)
+        fila.addStretch()
+        pl.addLayout(fila)
+        pestanas.addTab(pag, "Facturas")
+        lay.addWidget(pestanas, 1)
         self.refrescar()
 
     def refrescar(self):
@@ -883,6 +909,7 @@ class ConfiguracionTab(QWidget):
         for cat, sp in self.spins_coef.items():
             sp.setValue(defecto.coef(cat) * 100)
         self.plantilla_edit.setPlainText(db.obtener_plantilla_notas(conn))
+        self.plantilla_factura_edit.setPlainText(db.obtener_plantilla_factura(conn))
         conn.close()
 
     def guardar_opciones(self):
@@ -897,6 +924,20 @@ class ConfiguracionTab(QWidget):
         db.guardar_plantilla_notas(self.plantilla_edit.toPlainText(), conn)
         conn.close()
         QMessageBox.information(self, "Plantilla", "Plantilla guardada.")
+
+    def guardar_plantilla_factura(self):
+        conn = db.get_connection()
+        db.guardar_plantilla_factura(self.plantilla_factura_edit.toPlainText(), conn)
+        conn.close()
+        QMessageBox.information(self, "Plantilla", "Plantilla de facturas guardada. Se usará en las facturas nuevas.")
+
+    def restaurar_plantilla_factura(self):
+        if QMessageBox.question(self, "Restaurar plantilla",
+                                "¿Restaurar la plantilla original de facturas? Se perderán tus cambios.") != QMessageBox.Yes:
+            return
+        conn = db.get_connection()
+        self.plantilla_factura_edit.setPlainText(db.restaurar_plantilla_factura(conn))
+        conn.close()
 
     def restaurar_plantilla(self):
         if QMessageBox.question(self, "Restaurar plantilla",
