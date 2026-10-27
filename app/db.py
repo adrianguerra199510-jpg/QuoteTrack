@@ -229,6 +229,9 @@ def init_db() -> None:
     _agregar_columna(conn, "cotizacion_items", "modalidad", "TEXT NOT NULL DEFAULT 'servicio'")
     _agregar_columna(conn, "cotizacion_items", "apu_base", "REAL NOT NULL DEFAULT 1")
     _agregar_columna(conn, "cotizacion_items", "titulo", "TEXT NOT NULL DEFAULT ''")
+    # Costos adicionales con base elegible (categorías) y opción de diluirse en los ítems
+    _agregar_columna(conn, "cotizacion_cargos", "base", "TEXT NOT NULL DEFAULT ''")
+    _agregar_columna(conn, "cotizacion_cargos", "diluir", "INTEGER NOT NULL DEFAULT 0")
     # Facturas por etapas: una cotización puede tener varias facturas (abonos), cada una con su concepto y porcentaje
     conn.execute("DROP INDEX IF EXISTS idx_facturas_cotizacion")
     _agregar_columna(conn, "facturas", "concepto", "TEXT NOT NULL DEFAULT ''")
@@ -287,10 +290,12 @@ def obtener_lineas(cotizacion_id: int, conn: sqlite3.Connection) -> list[Linea]:
 
 def obtener_cargos(cotizacion_id: int, conn: sqlite3.Connection) -> list[Cargo]:
     filas = conn.execute(
-        "SELECT concepto, tipo, valor, aplica_itbms FROM cotizacion_cargos WHERE cotizacion_id = ? ORDER BY id",
+        "SELECT concepto, tipo, valor, aplica_itbms, base, diluir FROM cotizacion_cargos "
+        "WHERE cotizacion_id = ? ORDER BY id",
         (cotizacion_id,),
     ).fetchall()
-    return [Cargo(f["concepto"], f["tipo"], f["valor"], bool(f["aplica_itbms"])) for f in filas]
+    return [Cargo(f["concepto"], f["tipo"], f["valor"], bool(f["aplica_itbms"]), f["base"] or "", bool(f["diluir"]))
+            for f in filas]
 
 
 def obtener_items(cotizacion_id: int, conn: sqlite3.Connection) -> list[tuple[str, float, float]]:
@@ -311,6 +316,14 @@ def tasa_de_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> float:
         return 0.0
     base = fila["subtotal"] + fila["cargos"]
     return round(fila["itbms"] / base, 4) if base else ITBMS_RATE
+
+
+def calcular_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> tuple[list[Linea], calculo.Totales]:
+    """Líneas de la cotización ya valoradas (precio de los APU y costos diluidos en `ajuste`) y sus totales."""
+    lineas = obtener_lineas(cotizacion_id, conn)
+    totales = calculo.calcular(lineas, obtener_cargos(cotizacion_id, conn), tasa_de_cotizacion(cotizacion_id, conn),
+                               obtener_config_apu(cotizacion_id, conn))
+    return lineas, totales
 
 
 def totales_cotizacion(cotizacion_id: int, conn: sqlite3.Connection) -> calculo.Totales:
@@ -383,8 +396,9 @@ def guardar_cotizacion(cotizacion_id: int, lineas, cargos, conn: sqlite3.Connect
                   i.ref_categoria) for i in l.apu.insumos])
     conn.execute("DELETE FROM cotizacion_cargos WHERE cotizacion_id = ?", (cotizacion_id,))
     conn.executemany(
-        "INSERT INTO cotizacion_cargos (cotizacion_id, concepto, tipo, valor, aplica_itbms) VALUES (?, ?, ?, ?, ?)",
-        [(cotizacion_id, c.concepto, c.tipo, c.valor, int(c.aplica_itbms)) for c in cargos],
+        "INSERT INTO cotizacion_cargos (cotizacion_id, concepto, tipo, valor, aplica_itbms, base, diluir) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(cotizacion_id, c.concepto, c.tipo, c.valor, int(c.aplica_itbms), c.base or "", int(c.diluir)) for c in cargos],
     )
     conn.execute(
         "UPDATE cotizaciones SET subtotal = ?, cargos = ?, itbms = ?, total = ?, itbms_tasa = ? WHERE id = ?",

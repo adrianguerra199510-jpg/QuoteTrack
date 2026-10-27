@@ -4,7 +4,7 @@ from dataclasses import replace
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
+    QApplication, QCheckBox, QRadioButton, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -17,7 +17,7 @@ from app.ui_texto import EditorTextoDialog
 from app.ui_vista_previa import vista_previa
 
 COL_COD, COL_DESC, COL_TIPO, COL_UD, COL_CANT, COL_PRECIO, COL_IMPORTE, COL_ITBMS = range(8)
-CARGO_CONCEPTO, CARGO_TIPO, CARGO_VALOR, CARGO_MONTO, CARGO_ITBMS = range(5)
+CARGO_CONCEPTO, CARGO_TIPO, CARGO_VALOR, CARGO_MONTO, CARGO_ITBMS, CARGO_BASE, CARGO_DILUIR = range(7)
 FONDO_GRUPO = QBrush(QColor("#E8EEFC"))
 ROJO = QBrush(QColor(estilo.ROJO))
 PRESETS_CARGO = ["Administración", "Utilidad", "Imprevistos", "Otro…"]
@@ -25,6 +25,116 @@ PRESETS_CARGO = ["Administración", "Utilidad", "Imprevistos", "Otro…"]
 
 def _dinero(v: float) -> str:
     return f"B/. {v:,.2f}"
+
+
+class BaseCargoDialog(QDialog):
+    """Elige sobre qué actúa un costo adicional: todo el subtotal o solo algunas categorías del análisis de precio."""
+
+    def __init__(self, cargo, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Se aplica sobre · {cargo.concepto or 'costo adicional'}")
+        self.setMinimumWidth(420)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 18, 20, 14)
+        info = QLabel("El porcentaje se calcula sobre lo que elijas, y si el costo está marcado como «Diluir» "
+                      "se reparte solo entre los ítems que tengan esas categorías.")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        self.todo = QRadioButton("Todo el subtotal de ítems (uniformemente)")
+        self.algunas = QRadioButton("Solo sobre estas categorías:")
+        lay.addWidget(self.todo)
+        lay.addWidget(self.algunas)
+        self.checks = {}
+        for clave, nombre in calculo.CATEGORIAS_BASE.items():
+            ch = QCheckBox(nombre)
+            ch.setStyleSheet("margin-left: 24px;")
+            ch.toggled.connect(lambda *_: self.algunas.setChecked(True) if any(
+                x.isChecked() for x in self.checks.values()) else None)
+            self.checks[clave] = ch
+            lay.addWidget(ch)
+        for clave in cargo.categorias:
+            self.checks[clave].setChecked(True)
+        (self.algunas if cargo.categorias else self.todo).setChecked(True)
+        self.todo.toggled.connect(lambda v: [c.setChecked(False) for c in self.checks.values()] if v else None)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def base(self) -> str:
+        """Categorías elegidas separadas por coma; vacío = todo el subtotal."""
+        if self.todo.isChecked():
+            return ""
+        return ",".join(k for k, c in self.checks.items() if c.isChecked())
+
+
+class ResumenDialog(QDialog):
+    """Resumen de la cotización: costos directos por categoría, margen de los análisis, costos adicionales y total."""
+
+    def __init__(self, filas, titulo="Resumen de la cotización", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(titulo)
+        self.resize(900, 780)
+        permitir_maximizar(self)
+        self.filas = filas
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 16, 18, 12)
+        self.tabla = tabla_estandar(["Concepto", "Monto", "% del total"], estirar=0)
+        self.tabla.setSelectionMode(QTableWidget.NoSelection)
+        self.tabla.setFocusPolicy(Qt.NoFocus)
+        self.tabla.verticalHeader().setDefaultSectionSize(28)
+        self.tabla.verticalHeader().setMinimumSectionSize(24)
+        total = next((m for _e, m, s in filas if s == "total"), 0) or 0
+        self.tabla.setRowCount(len(filas))
+        negrita = QFont()
+        negrita.setBold(True)
+        for i, (etiqueta, monto, tipo) in enumerate(filas):
+            celdas = [QTableWidgetItem(etiqueta),
+                      QTableWidgetItem("" if monto is None else _dinero(monto)),
+                      QTableWidgetItem("" if monto is None or not total else f"{monto / total * 100:.1f}%")]
+            for c, it in enumerate(celdas):
+                it.setFlags(Qt.ItemIsEnabled)
+                if c:
+                    it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if tipo in ("seccion", "subtotal", "total"):
+                    it.setFont(negrita)
+                if tipo == "seccion":
+                    it.setBackground(FONDO_GRUPO)
+                elif tipo == "total":
+                    it.setBackground(QBrush(QColor("#DBEAFE")))
+                self.tabla.setItem(i, c, it)
+        hc = self.tabla.horizontalHeader()
+        hc.setSectionResizeMode(1, QHeaderView.Fixed)
+        hc.setSectionResizeMode(2, QHeaderView.Fixed)
+        self.tabla.setColumnWidth(1, 140)
+        self.tabla.setColumnWidth(2, 110)
+        self.tabla.setWordWrap(True)                       # las descripciones largas de los costos no se cortan
+        hc.sectionResized.connect(lambda *_: self.tabla.resizeRowsToContents())
+        lay.addWidget(self.tabla, 1)
+        QTimer.singleShot(0, self.tabla.resizeRowsToContents)
+        fila = QHBoxLayout()
+        self.btn_copiar = boton("Copiar", "copy", tooltip="Copia el resumen al portapapeles (para pegarlo en un correo o en Excel)")
+        self.btn_copiar.clicked.connect(self.copiar)
+        cerrar = boton("Cerrar", "x")
+        cerrar.clicked.connect(self.accept)
+        fila.addWidget(self.btn_copiar)
+        fila.addStretch()
+        fila.addWidget(cerrar)
+        lay.addLayout(fila)
+
+    def texto(self) -> str:
+        total = next((m for _e, m, s in self.filas if s == "total"), 0) or 0
+        return "\n".join(
+            f"{e}\t{'' if m is None else f'{m:,.2f}'}\t{'' if m is None or not total else f'{m / total * 100:.1f}%'}"
+            for e, m, _s in self.filas)
+
+    def copiar(self):
+        QApplication.clipboard().setText(self.texto())
+
+
+def mostrar_resumen(parent, lineas, cargos, tasa, cfg, titulo="Resumen de la cotización"):
+    """Abre el resumen de una cotización a partir de sus líneas, costos adicionales, tasa y coeficientes."""
+    ResumenDialog(calculo.resumen(lineas, cargos, tasa, cfg), titulo, parent).exec()
 
 
 class ItemsDialog(QDialog):
@@ -129,6 +239,8 @@ class ItemsDialog(QDialog):
                                             tooltip="Guarda el ítem (o los sub-ítems del grupo) para reutilizarlos")
         self.btn_apu = boton("Análisis de precio", "calculator",
                              tooltip="Análisis de precio unitario del ítem «mano de obra y material» seleccionado")
+        self.btn_resumen = boton("Resumen", "receipt", tooltip="Costos directos, mano de obra, servicios, administración, utilidad y total")
+        self.btn_resumen.clicked.connect(self.ver_resumen)
         self.btn_coef = boton("Coeficientes e indirectos", "sliders")
         self.btn_biblioteca.clicked.connect(self.desde_biblioteca)
         self.btn_guardar_biblioteca.clicked.connect(self.guardar_en_biblioteca)
@@ -137,7 +249,7 @@ class ItemsDialog(QDialog):
         for b in (self.btn_biblioteca, self.btn_guardar_biblioteca):
             barra2.addWidget(b)
         barra2.addStretch()
-        for b in (self.btn_apu, self.btn_coef):
+        for b in (self.btn_resumen, self.btn_apu, self.btn_coef):
             barra2.addWidget(b)
         layout.addLayout(barra2)
 
@@ -180,16 +292,18 @@ class ItemsDialog(QDialog):
         self.btn_ver_cargos = self._boton_seccion(fila, lambda v: self.tabla_cargos.setVisible(v)
                                                   or self.btn_cargo.setVisible(v) or self.btn_quitar_cargo.setVisible(v))
         layout.addLayout(fila)
-        self.tabla_cargos = tabla_estandar(["Concepto", "Tipo", "Valor", "Monto", "ITBMS"])
+        self.tabla_cargos = tabla_estandar(["Concepto", "Tipo", "Valor", "Monto", "ITBMS", "Se aplica sobre", "Diluir"])
         self.tabla_cargos.setFixedHeight(150)
         self.tabla_cargos.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed
                                           | QTableWidget.AnyKeyPressed if editable else QTableWidget.NoEditTriggers)
         hc = self.tabla_cargos.horizontalHeader()
         hc.setSectionResizeMode(CARGO_CONCEPTO, QHeaderView.Stretch)
-        for c, ancho in ((CARGO_TIPO, 150), (CARGO_VALOR, 110), (CARGO_MONTO, 130), (CARGO_ITBMS, 64)):
+        for c, ancho in ((CARGO_TIPO, 150), (CARGO_VALOR, 110), (CARGO_MONTO, 130), (CARGO_ITBMS, 64),
+                         (CARGO_BASE, 230), (CARGO_DILUIR, 70)):
             hc.setSectionResizeMode(c, QHeaderView.Fixed)
             self.tabla_cargos.setColumnWidth(c, ancho)
         self.tabla_cargos.itemChanged.connect(self._al_editar_cargo)
+        self.tabla_cargos.cellDoubleClicked.connect(self._doble_clic_cargo)
         layout.addWidget(self.tabla_cargos)
 
         self.lbl_totales = QLabel()
@@ -379,12 +493,15 @@ class ItemsDialog(QDialog):
         """Actualiza código, importe y casillas de ITBMS (celdas calculadas) y los totales."""
         self._cargando = True
         self.costo_directo, self.coef_ind = calculo.aplicar_apu(self.lineas, self.cfg)   # precios de los APU
+        t = calculo.calcular(self.lineas, self.cargos, self.tasa, self.cfg)        # reparte los costos que se diluyen
         cods, imps = calculo.codigos(self.lineas), calculo.importes(self.lineas)
         for i, l in enumerate(self.lineas):
             self.tabla.item(i, COL_COD).setText(cods[i])
             if l.usa_apu:
                 self.tabla.item(i, COL_PRECIO).setText(f"{l.precio:,.2f}")
             self.tabla.item(i, COL_IMPORTE).setText(_dinero(imps[i]))
+            self.tabla.item(i, COL_IMPORTE).setToolTip(
+                f"Incluye {_dinero(l.ajuste)} de costos adicionales diluidos en este ítem" if l.ajuste else "")
             marca = self.tabla.item(i, COL_ITBMS)
             if l.es_grupo:
                 hijos = self.lineas[i + 1:i + 1 + self._hijos(i)]
@@ -398,11 +515,11 @@ class ItemsDialog(QDialog):
                     marca.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
             else:
                 marca.setCheckState(Qt.Checked if l.aplica_itbms else Qt.Unchecked)
-        subtotal = calculo.calcular(self.lineas).subtotal
+        montos = {id(c): m for c, m in t.cargos + t.diluidos}
         for c, cargo in enumerate(self.cargos):
             m = self.tabla_cargos.item(c, CARGO_MONTO)
             if m is not None:
-                m.setText(_dinero(cargo.monto(subtotal)))
+                m.setText(_dinero(montos.get(id(cargo), 0.0)))
         self._cargando = False
         self._actualizar_totales()
 
@@ -412,6 +529,8 @@ class ItemsDialog(QDialog):
         for cargo, monto in t.cargos:
             etiqueta = f"{cargo.concepto or 'Costo'} ({cargo.valor:g}%)" if cargo.tipo == "porcentaje" else (cargo.concepto or "Costo")
             filas.append(f"{etiqueta}: {_dinero(monto)}")
+        if t.diluidos:
+            filas.append("Costos diluidos en los ítems: " + _dinero(sum(m for _c, m in t.diluidos)))
         filas.append("ITBMS (exento): " + _dinero(0) if self.tasa == 0 else
                      f"ITBMS ({self.tasa:.0%}) sobre {_dinero(t.base_itbms)}: {_dinero(t.itbms)}")
         filas.append(f"<span style='font-size:16px'><b>Total: {_dinero(t.total)}</b></span>")
@@ -650,6 +769,9 @@ class ItemsDialog(QDialog):
                 menu.addAction(ico("trash", estilo.ROJO), "Eliminar", lambda *_: self.quitar())
         return menu
 
+    def ver_resumen(self):
+        mostrar_resumen(self, self.lineas, self.cargos, self.tasa, self.cfg, f"Resumen · {self.windowTitle()}")
+
     def _alternar_texto(self, visible):
         self._ocultas.clear()
         self.btn_ver_texto.setText("Ocultar texto" if visible else "Ver texto")
@@ -785,6 +907,16 @@ class ItemsDialog(QDialog):
             self.tabla_cargos.setItem(i, CARGO_VALOR, valor)
             self.tabla_cargos.setItem(i, CARGO_MONTO, monto)
             self.tabla_cargos.setItem(i, CARGO_ITBMS, marca)
+            base = QTableWidgetItem(calculo.nombre_base(c).capitalize())
+            base.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            base.setToolTip("Doble clic para elegir sobre qué actúa este costo" if self.editable else "")
+            diluir = QTableWidgetItem()
+            diluir.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | (Qt.ItemIsUserCheckable if self.editable else Qt.NoItemFlags))
+            diluir.setCheckState(Qt.Checked if c.diluir else Qt.Unchecked)
+            diluir.setToolTip("Marcado: el costo se reparte en el precio de los ítems y no sale como línea aparte")
+            diluir.setTextAlignment(Qt.AlignCenter)
+            self.tabla_cargos.setItem(i, CARGO_BASE, base)
+            self.tabla_cargos.setItem(i, CARGO_DILUIR, diluir)
             combo = QComboBox()
             combo.addItem("Porcentaje", "porcentaje")
             combo.addItem("Monto fijo", "monto")
@@ -827,7 +959,23 @@ class ItemsDialog(QDialog):
                 self._cargando = False
         elif c == CARGO_ITBMS:
             cargo.aplica_itbms = item.checkState() == Qt.Checked
+        elif c == CARGO_DILUIR:
+            cargo.diluir = item.checkState() == Qt.Checked
         self._refrescar_derivados()
+
+    def _doble_clic_cargo(self, fila, col):
+        if col == CARGO_BASE and self.editable:
+            self.elegir_base_cargo(fila)
+
+    def elegir_base_cargo(self, fila):
+        """Pregunta sobre qué actúa un costo adicional (todo el subtotal o ciertas categorías)."""
+        if not (0 <= fila < len(self.cargos)):
+            return
+        dlg = BaseCargoDialog(self.cargos[fila], self)
+        if self._ejecutar(dlg):
+            self.cargos[fila].base = dlg.base()
+            self._render_cargos()
+            self.tabla_cargos.setCurrentCell(fila, CARGO_BASE)
 
     def agregar_cargo(self, concepto=""):
         self.cargos.append(Cargo(concepto, "porcentaje", 0.0, True))

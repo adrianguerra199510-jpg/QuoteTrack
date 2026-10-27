@@ -204,7 +204,7 @@ def _tabla_items(doc, lineas, tasa) -> None:
             _texto(c[1].paragraphs[-1], " (exento de ITBMS)", tam=7, color="666666")
         _celda_texto(c[2], l.unidad, cen)
         _celda_texto(c[3], f"{l.cantidad:g}", der)
-        _celda_texto(c[4], _dinero(l.precio), der)
+        _celda_texto(c[4], _dinero(l.precio_mostrado), der)
         _celda_texto(c[5], _dinero(imps[i]), der)
     _anchos(t, anchos)
     _parrafo(doc, despues=4)

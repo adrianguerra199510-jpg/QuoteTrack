@@ -211,7 +211,7 @@ def _tabla_items(estilos, lineas, tasa):
             continue
         sufijo = ' <font size="7" color="#666666">(exento de ITBMS)</font>' if hay_exentos and not l.aplica_itbms else ""
         estilo = estilo_sub if l.nivel == 1 else estilos["Normal"]
-        filas.append([cods[i], _parrafos_desc(texto_rico.con_titulo(l.titulo, l.descripcion), estilo, sufijo=sufijo), l.unidad, f"{l.cantidad:g}", _dinero(l.precio), _dinero(imps[i])])
+        filas.append([cods[i], _parrafos_desc(texto_rico.con_titulo(l.titulo, l.descripcion), estilo, sufijo=sufijo), l.unidad, f"{l.cantidad:g}", _dinero(l.precio_mostrado), _dinero(imps[i])])
     tabla = Table(filas, colWidths=[1.4 * cm, 6.5 * cm, 1.4 * cm, 1.8 * cm, 3.2 * cm, 3.2 * cm], repeatRows=1)
     estilo = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),

@@ -83,7 +83,7 @@ def test_no_se_elimina_una_cotizacion_con_factura(conn):
 def test_menu_de_un_borrador(tab):
     m = tab.construir_menu()
     a = acciones(m)
-    assert list(a) == ["Abrir / Editar", "Vista previa", "Cambiar cliente…", "Cambiar estado a", "Generar factura", "Exportar PDF",
+    assert list(a) == ["Abrir / Editar", "Vista previa", "Resumen de costos", "Cambiar cliente…", "Cambiar estado a", "Generar factura", "Exportar PDF",
                        "Exportar Word", "Duplicar cotización", "Eliminar cotización…"]
     assert not a["Generar factura"].isEnabled() and a["Cambiar estado a"].isEnabled()
     assert [x.text() for x in a["Cambiar estado a"].menu().actions()] == ["Enviada"]

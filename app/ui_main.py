@@ -19,7 +19,7 @@ from app.ui_comun import (  # noqa: F401  (se reexportan para compatibilidad)
 )
 from app.ui_biblioteca import BibliotecaTab
 from app.ui_empresas import EmpresasTab
-from app.ui_items import ItemsDialog  # noqa: F401
+from app.ui_items import ItemsDialog, mostrar_resumen  # noqa: F401
 from app.ui_vista_previa import vista_previa
 
 COT_ESTADO = 5   # columna «Estado» de la tabla de cotizaciones
@@ -196,11 +196,13 @@ class CotizacionesTab(QWidget):
         self.btn_cliente.clicked.connect(self.cambiar_cliente)
         self.btn_vista = boton("Vista previa", "eye", tooltip="Ver cómo saldrá la cotización antes de exportarla")
         self.btn_vista.clicked.connect(self.vista_previa)
+        self.btn_resumen = boton("Resumen", "receipt", tooltip="Desglose de costos: materiales, mano de obra, servicios, administración, utilidad…")
+        self.btn_resumen.clicked.connect(self.resumen)
         self.btn_pdf = boton("Exportar PDF", "download")
         self.btn_pdf.clicked.connect(self.exportar_pdf)
         self.btn_word = boton("Exportar Word", "word")
         self.btn_word.clicked.connect(self.exportar_word)
-        for b_ in (self.btn_items, self.btn_cliente, self.btn_vista, self.btn_pdf, self.btn_word):
+        for b_ in (self.btn_items, self.btn_cliente, self.btn_vista, self.btn_resumen, self.btn_pdf, self.btn_word):
             acciones.addWidget(b_)
         acciones.addStretch()
         lay.addLayout(acciones)
@@ -271,6 +273,7 @@ class CotizacionesTab(QWidget):
         self.btn_factura.setEnabled(estado == "aprobada")
         self.btn_items.setEnabled(estado is not None)
         self.btn_cliente.setEnabled(estado == "borrador")
+        self.btn_resumen.setEnabled(estado is not None)
         self.btn_pdf.setEnabled(estado is not None)
         self.btn_word.setEnabled(estado is not None)
         self.btn_vista.setEnabled(estado is not None)
@@ -283,6 +286,20 @@ class CotizacionesTab(QWidget):
         nombre, ok = QInputDialog.getItem(parent, "Cambiar cliente", "Cliente de la cotización:", nombres,
                                           max(next((i for i, c in enumerate(clientes) if c["id"] == actual), 0), 0), False)
         return clientes[nombres.index(nombre)]["id"] if ok else None
+
+    def resumen(self):
+        sel = self._seleccionada()
+        if not sel:
+            return
+        conn = db.get_connection()
+        try:
+            lineas = db.obtener_lineas(sel[0], conn)
+            cargos = db.obtener_cargos(sel[0], conn)
+            tasa = db.tasa_de_cotizacion(sel[0], conn)
+            cfg = db.obtener_config_apu(sel[0], conn)
+        finally:
+            conn.close()
+        mostrar_resumen(self, lineas, cargos, tasa, cfg, f"Resumen · {sel[1]}")
 
     def cambiar_cliente(self):
         sel = self._seleccionada()
@@ -341,6 +358,7 @@ class CotizacionesTab(QWidget):
         menu.addAction(icono("edit"), "Abrir / Editar" if estado == "borrador" else "Ver detalle",
                        lambda *_: self.editar_items())
         menu.addAction(icono("eye"), "Vista previa", lambda *_: self.vista_previa())
+        menu.addAction(icono("receipt"), "Resumen de costos", lambda *_: self.resumen())
         menu.addAction(icono("users"), "Cambiar cliente…", lambda *_: self.cambiar_cliente()).setEnabled(
             estado == "borrador")
         menu.addSeparator()

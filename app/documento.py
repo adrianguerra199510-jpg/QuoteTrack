@@ -32,8 +32,7 @@ def de_cotizacion(cotizacion_id: int, mostrar_estado: bool | None = None) -> Doc
         if cot is None:
             raise ValueError("La cotización no existe.")
         cliente = conn.execute("SELECT * FROM clientes WHERE id = ?", (cot["cliente_id"],)).fetchone()
-        lineas = db.obtener_lineas(cotizacion_id, conn)
-        totales = db.totales_cotizacion(cotizacion_id, conn)
+        lineas, totales = db.calcular_cotizacion(cotizacion_id, conn)      # con los costos diluidos en los ítems
         if mostrar_estado is None:
             mostrar_estado = db.mostrar_estado_pdf(conn)
         empresa = db.empresa_de_cotizacion(cotizacion_id, conn)
