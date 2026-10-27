@@ -1,9 +1,9 @@
 """Piezas de interfaz compartidas: botones con icono, encabezados de página, filtros y utilidades."""
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QAbstractTextDocumentLayout, QKeySequence, QPalette, QShortcut, QTextDocument
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
-    QPushButton, QStyledItemDelegate, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QApplication, QPushButton, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from app import estilo, iconos
@@ -188,3 +188,54 @@ def permitir_maximizar(dlg) -> None:
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
     dlg.setSizeGripEnabled(True)
     QShortcut(QKeySequence(Qt.Key_F11), dlg, activated=lambda: dlg.showNormal() if dlg.isFullScreen() else dlg.showFullScreen())
+
+
+ROL_HTML = Qt.UserRole + 10      # HTML a dibujar en la celda (negrita, cursiva, subrayado, listas)
+
+
+class TextoRicoDelegate(QStyledItemDelegate):
+    """Dibuja en la celda el texto con formato (guardado como HTML en ROL_HTML) con el icono y la selección
+    normales de la tabla. Si la celda no tiene HTML, se comporta como un delegado estándar."""
+
+    SANGRIA_ICONO = 30           # espacio del icono y los márgenes a la izquierda del texto
+
+    def __init__(self, tabla):
+        super().__init__(tabla)
+        self.tabla = tabla
+
+    def _documento(self, html, ancho, fuente):
+        doc = QTextDocument()
+        doc.setDefaultFont(fuente)
+        doc.setDocumentMargin(1)
+        doc.setDefaultStyleSheet("p { margin-top: 0; margin-bottom: 3px; } ul, ol { margin-top: 0; margin-bottom: 3px; }")
+        doc.setHtml(html)
+        doc.setTextWidth(max(ancho, 40))
+        return doc
+
+    def paint(self, painter, option, index):
+        html = index.data(ROL_HTML)
+        if not html:
+            return super().paint(painter, option, index)
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        estilo_ = opt.widget.style() if opt.widget else QApplication.style()
+        estilo_.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)
+        zona = estilo_.subElementRect(QStyle.SE_ItemViewItemText, opt, opt.widget)
+        doc = self._documento(html, zona.width(), opt.font)
+        ctx = QAbstractTextDocumentLayout.PaintContext()
+        color = opt.palette.highlightedText() if opt.state & QStyle.State_Selected else opt.palette.text()
+        ctx.palette.setBrush(QPalette.Text, color)
+        painter.save()
+        painter.setClipRect(zona)
+        painter.translate(zona.left(), zona.top() + max(0, (zona.height() - doc.size().height()) / 2))
+        doc.documentLayout().draw(painter, ctx)
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        html = index.data(ROL_HTML)
+        if not html:
+            return super().sizeHint(option, index)
+        ancho = self.tabla.columnWidth(index.column()) - self.SANGRIA_ICONO
+        doc = self._documento(html, ancho, option.font)
+        return QSize(self.tabla.columnWidth(index.column()), int(doc.size().height()) + 8)

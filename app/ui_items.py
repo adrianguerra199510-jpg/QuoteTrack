@@ -10,7 +10,7 @@ from app import calculo, db, estilo, iconos, texto_rico
 from app.calculo import Apu, Cargo, Linea
 from app.ui_apu import AjustesApuDialog, ApuDialog
 from app.ui_biblioteca import SelectorConceptosDialog, combo_modalidad
-from app.ui_comun import boton, permitir_maximizar, parsear_numero, tabla_estandar
+from app.ui_comun import ROL_HTML, TextoRicoDelegate, boton, permitir_maximizar, parsear_numero, tabla_estandar
 from app.ui_texto import EditorTextoDialog
 from app.ui_vista_previa import vista_previa
 
@@ -135,6 +135,7 @@ class ItemsDialog(QDialog):
         self.tabla.setSelectionBehavior(QTableWidget.SelectRows)
         self.tabla.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed
                                    | QTableWidget.AnyKeyPressed if editable else QTableWidget.NoEditTriggers)
+        self.tabla.setItemDelegateForColumn(COL_DESC, TextoRicoDelegate(self.tabla))
         h = self.tabla.horizontalHeader()
         h.setSectionResizeMode(COL_COD, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(COL_DESC, QHeaderView.Stretch)
@@ -302,6 +303,11 @@ class ItemsDialog(QDialog):
             visible = self.btn_ver_texto.isChecked()
             primera, _, resto = plano.partition("\n")
             desc = QTableWidgetItem(plano if visible or not resto else primera + " …")
+            completo = texto_rico.con_titulo(l.titulo, l.descripcion)
+            parrafos = texto_rico.parsear(completo)
+            if not visible and len(parrafos) > 1:
+                parrafos = [texto_rico.Parrafo(parrafos[0].tipo, parrafos[0].tramos + [texto_rico.Tramo(" …")])]
+            desc.setData(ROL_HTML, texto_rico.serializar(parrafos))     # lo dibuja con formato TextoRicoDelegate
             desc.setToolTip(plano if not visible and resto else
                             "Doble clic o F2 para editar el texto con formato" if self.editable else "")
             desc.setIcon(iconos.icono("folder", estilo.AZUL, 18) if l.es_grupo else

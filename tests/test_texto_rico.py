@@ -144,3 +144,12 @@ def test_iconos_contraer_expandir(cot, qapp):
     assert d.btn_ver_cargos.text() == "Expandir"
     d.btn_ver_cargos.setChecked(True)
     assert d.btn_ver_cargos.text() == "Contraer"
+
+
+def test_la_tabla_muestra_el_formato(cot, qapp):
+    from app.ui_comun import ROL_HTML
+    d = ui_items.ItemsDialog(1, "COT-2026-0001", editable=True)
+    html = d.tabla.item(0, ui_items.COL_DESC).data(ROL_HTML)
+    assert "<b>reforzado</b>" in html and "<li>uno</li>" in html
+    d.btn_ver_texto.setChecked(False)
+    assert d.tabla.item(0, ui_items.COL_DESC).data(ROL_HTML).endswith("…</p>")
