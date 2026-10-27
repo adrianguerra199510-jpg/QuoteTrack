@@ -196,7 +196,7 @@ def test_menu_de_facturas(conn, qapp, monkeypatch):
     f.tabla.setCurrentCell(0, 0)
     a = acciones(f.construir_menu())
     assert list(a) == ["Vista previa", "Marcar como pagada…", "Marcar como vencida", "Editar notas", "Exportar PDF",
-                       "Exportar Word"]
+                       "Exportar Word", "Eliminar factura…"]
     assert a["Marcar como pagada…"].isEnabled() and a["Marcar como vencida"].isEnabled()
     a["Marcar como vencida"].trigger()
     assert f.tabla.item(0, ui_main.FAC_ESTADO).text() == "vencida"

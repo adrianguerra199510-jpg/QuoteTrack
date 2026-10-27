@@ -629,6 +629,17 @@ def generar_factura(cotizacion_id: int, conn: sqlite3.Connection, porcentaje: fl
     return numero
 
 
+def eliminar_factura(factura_id: int, conn: sqlite3.Connection) -> str:
+    """Elimina una factura (la que se hizo mal) y devuelve su número. El importe vuelve al saldo por facturar de
+    su cotización, que se puede facturar de nuevo."""
+    fila = conn.execute("SELECT numero FROM facturas WHERE id = ?", (factura_id,)).fetchone()
+    if fila is None:
+        raise ValueError("La factura no existe.")
+    conn.execute("DELETE FROM facturas WHERE id = ?", (factura_id,))
+    conn.commit()
+    return fila["numero"]
+
+
 def marcar_factura_pagada(factura_id: int, fecha_pago: str, conn: sqlite3.Connection) -> None:
     fila = conn.execute("SELECT estado_pago FROM facturas WHERE id = ?", (factura_id,)).fetchone()
     if fila is None:

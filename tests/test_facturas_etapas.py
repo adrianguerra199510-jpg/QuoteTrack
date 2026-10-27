@@ -178,3 +178,35 @@ def test_configuracion_edita_plantilla_de_facturas(conn, qapp, monkeypatch):
     assert db.obtener_plantilla_factura(conn) == "Texto propio {monto}"
     cfg.restaurar_plantilla_factura()
     assert db.obtener_plantilla_factura(conn) == db.PLANTILLA_FACTURA_INICIAL
+
+
+def test_eliminar_factura_devuelve_el_saldo(cot):
+    db.generar_factura(1, cot, porcentaje=30)
+    db.generar_factura(1, cot, porcentaje=40)
+    primera = facturas(cot)[0]
+    assert db.eliminar_factura(primera["id"], cot) == primera["numero"]
+    assert db.resumen_facturacion(1, cot)["facturado"] == 428.0
+    db.generar_factura(1, cot, porcentaje=30)                          # el saldo liberado se puede volver a facturar
+    assert len(facturas(cot)) == 2
+    with pytest.raises(ValueError):
+        db.eliminar_factura(999, cot)
+
+
+def test_eliminar_factura_pagada_desde_la_interfaz(cot, qapp, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    db.generar_factura(1, cot)
+    db.marcar_factura_pagada(1, "2026-02-01", cot)
+    w = ui_main.MainWindow()
+    f = w.facturas_tab
+    f._ventana = w
+    f.refrescar()
+    f.tabla.setCurrentCell(0, 0)
+    assert f.btn_eliminar.isEnabled()
+    mensajes = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda p, t, texto, *a: mensajes.append(texto) or QMessageBox.No))
+    f.eliminar_factura()                                               # se cancela: no se borra
+    assert len(facturas(cot)) == 1 and "PAGADA" in mensajes[0]
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a: QMessageBox.Yes))
+    [a for a in f.construir_menu().actions() if a.text() == "Eliminar factura…"][0].trigger()
+    assert facturas(cot) == [] and f.tabla.rowCount() == 0 and not f.btn_eliminar.isEnabled()

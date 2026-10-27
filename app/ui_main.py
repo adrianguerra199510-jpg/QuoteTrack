@@ -673,6 +673,9 @@ class FacturasTab(QWidget):
         acciones.addWidget(self.btn_pdf)
         acciones.addWidget(self.btn_word)
         acciones.addStretch()
+        self.btn_eliminar = boton("Eliminar", "trash", "peligro", tooltip="Elimina la factura seleccionada")
+        self.btn_eliminar.clicked.connect(self.eliminar_factura)
+        acciones.addWidget(self.btn_eliminar)
         lay.addLayout(acciones)
         self.refrescar()
 
@@ -685,6 +688,7 @@ class FacturasTab(QWidget):
         self.btn_pdf.setEnabled(estado is not None)
         self.btn_word.setEnabled(estado is not None)
         self.btn_vista.setEnabled(estado is not None)
+        self.btn_eliminar.setEnabled(estado is not None)
 
     def _id_seleccionado(self):
         fila = self.tabla.currentRow()
@@ -749,6 +753,8 @@ class FacturasTab(QWidget):
         menu.addSeparator()
         menu.addAction(icono("download"), "Exportar PDF", lambda *_: self.exportar_pdf())
         menu.addAction(icono("word"), "Exportar Word", lambda *_: self.exportar_word())
+        menu.addSeparator()
+        menu.addAction(icono("trash", estilo.ROJO), "Eliminar factura…", lambda *_: self.eliminar_factura())
         return menu
 
     def _aplicar(self, funcion, *args):
@@ -821,6 +827,29 @@ class FacturasTab(QWidget):
         fid = self._id_seleccionado()
         if fid is not None:
             self._aplicar(db.marcar_factura_vencida, fid)
+
+    def eliminar_factura(self):
+        fid = self._id_seleccionado()
+        fila = self.tabla.currentRow()
+        if fid is None:
+            QMessageBox.information(self, "Selecciona una factura", "Selecciona una factura de la tabla.")
+            return
+        numero = self.tabla.item(fila, 0).text()
+        pagada = self.tabla.item(fila, FAC_ESTADO).text() == "pagada"
+        aviso = (f"¿Eliminar la factura {numero}?\n"
+                 + ("ATENCIÓN: está marcada como PAGADA; al eliminarla se pierde el registro del pago.\n" if pagada else "")
+                 + "Su importe volverá al saldo por facturar de la cotización.\nEsta acción no se puede deshacer.")
+        if QMessageBox.question(self, "Eliminar factura", aviso) != QMessageBox.Yes:
+            return
+        conn = db.get_connection()
+        try:
+            db.eliminar_factura(fid, conn)
+        except ValueError as e:
+            QMessageBox.warning(self, "Eliminar factura", str(e))
+            return
+        finally:
+            conn.close()
+        self.refrescar()
 
 
 class ConfiguracionTab(QWidget):
