@@ -188,3 +188,19 @@ def test_resumen_boton_del_editor_y_de_la_pestana(conn, qapp, monkeypatch):
     t.tabla.setCurrentCell(0, 0)
     t.btn_resumen.click()
     assert len(abiertos) == 2
+
+
+def test_grafica_del_resumen(qapp):
+    from app import ui_items
+    filas = calculo.resumen([obra(1), servicio(400)], [Cargo("Administración", "porcentaje", 10, True, "mano_obra", True)],
+                            0.07, ConfigApu(0.10, 0.20, 0.15, 0.15))
+    dlg = ui_items.ResumenDialog(filas)
+    g = dlg.grafica
+    nombres = [n for n, _m in g.partes]
+    assert nombres[0] == "Servicios profesionales" and "Administración" in nombres and "ITBMS" in nombres
+    assert [m for _n, m in g.partes] == sorted((m for _n, m in g.partes), reverse=True)
+    assert round(sum(m for _n, m in g.partes), 2) == g.total          # los componentes suman el total
+    assert dlg.pestanas.count() == 2
+    dlg.show()
+    dlg.pestanas.setCurrentIndex(1)
+    assert not dlg.grab().isNull()                                    # se dibuja sin errores

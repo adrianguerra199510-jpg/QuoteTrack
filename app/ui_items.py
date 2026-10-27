@@ -1,10 +1,10 @@
 """Editor de una cotización: grupos y sub-ítems, ITBMS por línea, costos adicionales y notas."""
 from dataclasses import replace
 
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QShortcut
+from PySide6.QtCore import QRectF, QTimer, Qt
+from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QRadioButton, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
+    QApplication, QCheckBox, QRadioButton, QTabWidget, QToolTip, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -68,6 +68,78 @@ class BaseCargoDialog(QDialog):
         return ",".join(k for k, c in self.checks.items() if c.isChecked())
 
 
+class GraficaResumen(QWidget):
+    """Barras horizontales con la composición del total, de mayor a menor: cada componente del resumen con su monto
+    y su porcentaje escritos junto a la barra. Un solo tono (es magnitud, no identidad) y fondo claro."""
+
+    COLOR = QColor("#2A78D6")
+    ALTO_FILA, ANCHO_ETIQUETA = 30, 250
+
+    def __init__(self, filas, parent=None):
+        super().__init__(parent)
+        self.total = next((m for _e, m, s in filas if s == "total"), 0) or 0
+        partes = [(e.split(" (")[0], m) for e, m, s in filas if s == "fila" and m]
+        self.partes = sorted((p for p in partes if p[1] > 0), key=lambda p: p[1], reverse=True)
+        self.setMouseTracking(True)
+        self.setMinimumHeight(70 + self.ALTO_FILA * max(len(self.partes), 1))
+        self.setMinimumWidth(520)
+
+    def _geometria(self):
+        ancho_barra = max(self.width() - self.ANCHO_ETIQUETA - 150, 80)
+        mayor = self.partes[0][1] if self.partes else 1
+        return ancho_barra, mayor
+
+    def paintEvent(self, _ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        tinta, tenue = QColor(estilo.TEXTO), QColor(estilo.APAGADO)
+        fuente = p.font()
+        negrita = QFont(fuente)
+        negrita.setBold(True)
+        p.setFont(negrita)
+        p.setPen(tinta)
+        p.drawText(0, 4, self.width(), 24, Qt.AlignLeft | Qt.AlignVCenter, "¿De qué se compone el total?")
+        p.setFont(fuente)
+        p.setPen(tenue)
+        p.drawText(0, 26, self.width(), 20, Qt.AlignLeft | Qt.AlignVCenter,
+                   f"Total de la cotización: {_dinero(self.total)} · cada barra es un componente del resumen")
+        ancho_barra, mayor = self._geometria()
+        x0 = self.ANCHO_ETIQUETA
+        top = 56
+        # rejilla tenue y eje de base
+        p.setPen(QPen(QColor("#E5E7EB"), 1))
+        for f in (0.5, 1.0):
+            x = x0 + int(ancho_barra * f)
+            p.drawLine(x, top - 4, x, top + self.ALTO_FILA * len(self.partes))
+        p.setPen(QPen(QColor("#9CA3AF"), 1))
+        p.drawLine(x0, top - 4, x0, top + self.ALTO_FILA * len(self.partes))
+        for i, (nombre, monto) in enumerate(self.partes):
+            y = top + i * self.ALTO_FILA
+            p.setPen(tinta)
+            p.drawText(0, y, x0 - 10, self.ALTO_FILA, Qt.AlignRight | Qt.AlignVCenter,
+                       p.fontMetrics().elidedText(nombre, Qt.ElideRight, x0 - 10))
+            largo = max(int(ancho_barra * monto / mayor), 3)
+            alto = self.ALTO_FILA - 12
+            p.setPen(Qt.NoPen)
+            p.setBrush(self.COLOR)
+            p.drawRoundedRect(QRectF(x0 + 1, y + 6, largo, alto), 4, 4)
+            p.drawRect(QRectF(x0 + 1, y + 6, min(largo, 5), alto))        # la base pegada al eje es recta
+            pct = f"{monto / self.total * 100:.1f}%" if self.total else ""
+            p.setPen(tinta)
+            p.drawText(x0 + largo + 8, y, 150, self.ALTO_FILA, Qt.AlignLeft | Qt.AlignVCenter,
+                       f"{_dinero(monto)}  ·  {pct}")
+        p.end()
+
+    def mouseMoveEvent(self, ev):
+        i = int((ev.position().y() - 56) // self.ALTO_FILA)
+        if 0 <= i < len(self.partes):
+            nombre, monto = self.partes[i]
+            pct = f" ({monto / self.total * 100:.1f}% del total)" if self.total else ""
+            QToolTip.showText(ev.globalPosition().toPoint(), f"{nombre}: {_dinero(monto)}{pct}", self)
+        else:
+            QToolTip.hideText()
+
+
 class ResumenDialog(QDialog):
     """Resumen de la cotización: costos directos por categoría, margen de los análisis, costos adicionales y total."""
 
@@ -110,8 +182,16 @@ class ResumenDialog(QDialog):
         self.tabla.setColumnWidth(2, 110)
         self.tabla.setWordWrap(True)                       # las descripciones largas de los costos no se cortan
         hc.sectionResized.connect(lambda *_: self.tabla.resizeRowsToContents())
-        lay.addWidget(self.tabla, 1)
         QTimer.singleShot(0, self.tabla.resizeRowsToContents)
+        self.grafica = GraficaResumen(filas)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setWidget(self.grafica)
+        self.pestanas = QTabWidget()
+        self.pestanas.addTab(self.tabla, "Tabla")
+        self.pestanas.addTab(scroll, "Gráfica")
+        lay.addWidget(self.pestanas, 1)
         fila = QHBoxLayout()
         self.btn_copiar = boton("Copiar", "copy", tooltip="Copia el resumen al portapapeles (para pegarlo en un correo o en Excel)")
         self.btn_copiar.clicked.connect(self.copiar)
