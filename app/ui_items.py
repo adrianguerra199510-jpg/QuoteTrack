@@ -1,4 +1,6 @@
 """Editor de una cotización: grupos y sub-ítems, ITBMS por línea, costos adicionales y notas."""
+from dataclasses import replace
+
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -32,6 +34,7 @@ class ItemsDialog(QDialog):
         self.editable = editable
         self._cargando = False
         self._invalidos = {}          # {("l"|"c", fila, columna): texto} con números mal escritos
+        self._ocultas = {}            # {id(línea): True/False} texto oculto/visible de un ítem concreto
         self.setWindowTitle(f"Cotización {numero}" + ("" if editable else " (solo lectura)"))
         self.resize(1120, 820)
         permitir_maximizar(self)
@@ -133,6 +136,9 @@ class ItemsDialog(QDialog):
         self.tabla.setMinimumHeight(240)
         self.tabla.setWordWrap(True)
         self.tabla.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tabla.setVerticalScrollMode(QTableWidget.ScrollPerPixel)      # una fila muy alta se puede recorrer completa
+        self.tabla.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tabla.customContextMenuRequested.connect(self._menu_contextual)
         self.tabla.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed
                                    | QTableWidget.AnyKeyPressed if editable else QTableWidget.NoEditTriggers)
         self.tabla.setItemDelegateForColumn(COL_DESC, TextoRicoDelegate(self.tabla))
@@ -300,7 +306,7 @@ class ItemsDialog(QDialog):
             cod = QTableWidgetItem()
             cod.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             plano = texto_rico.a_texto_plano(texto_rico.con_titulo(l.titulo, l.descripcion))
-            visible = self.btn_ver_texto.isChecked()
+            visible = not self._texto_oculto(l)
             primera, _, resto = plano.partition("\n")
             desc = QTableWidgetItem(plano if visible or not resto else primera + " …")
             completo = texto_rico.con_titulo(l.titulo, l.descripcion)
@@ -556,7 +562,87 @@ class ItemsDialog(QDialog):
     def _sin_texto(l) -> bool:
         return not (l.titulo or "").strip() and texto_rico.es_vacio(l.descripcion)
 
+    def _texto_oculto(self, l) -> bool:
+        return self._ocultas.get(id(l), not self.btn_ver_texto.isChecked())
+
+    def alternar_texto_fila(self, i=None):
+        """Oculta o muestra el detalle de la descripción de un solo ítem."""
+        i = self._fila_actual() if i is None else i
+        if 0 <= i < len(self.lineas):
+            l = self.lineas[i]
+            self._ocultas[id(l)] = not self._texto_oculto(l)
+            self._render_lineas(i)
+
+    def duplicar_item(self, i=None):
+        """Duplica el ítem (o el grupo con sus sub-ítems) justo debajo."""
+        i = self._fila_actual() if i is None else i
+        if not (0 <= i < len(self.lineas)) or not self.editable:
+            return
+        n = self._hijos(i) if self.lineas[i].es_grupo else 0
+        copias = [replace(l, apu=l.apu.copia() if l.apu else None) for l in self.lineas[i:i + 1 + n]]
+        self.lineas[i + 1 + n:i + 1 + n] = copias
+        self._render_lineas(i + 1 + n)
+
+    def alternar_itbms_fila(self, i):
+        if 0 <= i < len(self.lineas) and self.editable:
+            self.lineas[i].aplica_itbms = not self.lineas[i].aplica_itbms
+            self._render_lineas(i)
+
+    # ------------------------------------------------------------------ clic derecho
+    def _menu_contextual(self, pos):
+        fila = self.tabla.rowAt(pos.y())
+        if fila >= 0:
+            self.tabla.setCurrentCell(fila, COL_DESC)
+        self._mostrar_menu(self.construir_menu(fila), self.tabla.viewport().mapToGlobal(pos))
+
+    @staticmethod
+    def _mostrar_menu(menu, punto_global):
+        menu.exec(punto_global)
+
+    def construir_menu(self, fila=-1) -> QMenu:
+        """Menú del clic derecho: acciones para el ítem bajo el cursor (o para agregar, si se pulsa fuera de las filas)."""
+        menu = QMenu(self)
+        ico = lambda nombre, color=estilo.AZUL_OSCURO: iconos.icono(nombre, color, 18)
+        hay = 0 <= fila < len(self.lineas)
+        ed = self.editable
+        if hay:
+            l = self.lineas[fila]
+            menu.addAction(ico("edit"), "Editar título y texto…", lambda *_: self.editar_descripcion(fila))
+            oculto = self._texto_oculto(l)
+            menu.addAction(ico("eye"), "Mostrar texto completo" if oculto else "Ocultar texto",
+                           lambda *_: self.alternar_texto_fila(fila))
+            menu.addSeparator()
+            menu.addAction(ico("copy"), "Duplicar grupo con sus sub-ítems" if l.es_grupo and self._hijos(fila) else "Duplicar",
+                           lambda *_: self.duplicar_item(fila)).setEnabled(ed)
+        if ed:
+            nuevo = menu.addMenu(ico("plus"), "Agregar")
+            nuevo.addAction(ico("plus"), "Ítem", lambda *_: self.agregar_item())
+            nuevo.addAction(ico("folder-plus"), "Grupo", lambda *_: self.agregar_grupo())
+            sub = nuevo.addAction(ico("subitem"), "Sub-ítem", lambda *_: self.agregar_subitem())
+            sub.setEnabled(hay and self._padre(fila) >= 0 and self.lineas[self._padre(fila)].es_grupo)
+            nuevo.addAction(ico("book"), "Desde la biblioteca…", lambda *_: self.desde_biblioteca())
+        if hay:
+            if ed:
+                menu.addSeparator()
+                menu.addAction(ico("arrow-up"), "Subir", lambda *_: self.mover(-1))
+                menu.addAction(ico("arrow-down"), "Bajar", lambda *_: self.mover(1))
+                if not l.es_grupo:
+                    menu.addAction(ico("percent"), "Quitar ITBMS de este ítem" if l.aplica_itbms else "Aplicar ITBMS a este ítem",
+                                   lambda *_: self.alternar_itbms_fila(fila))
+            if not l.es_grupo:
+                menu.addSeparator()
+                menu.addAction(ico("calculator"), "Análisis de precio…", lambda *_: self.abrir_apu()).setEnabled(l.usa_apu)
+                menu.addAction(ico("download"), "Guardar en biblioteca…", lambda *_: self.guardar_en_biblioteca()).setEnabled(ed)
+            elif ed:
+                menu.addSeparator()
+                menu.addAction(ico("download"), "Guardar sub-ítems en biblioteca…", lambda *_: self.guardar_en_biblioteca())
+            if ed:
+                menu.addSeparator()
+                menu.addAction(ico("trash", estilo.ROJO), "Eliminar", lambda *_: self.quitar())
+        return menu
+
     def _alternar_texto(self, visible):
+        self._ocultas.clear()
         self.btn_ver_texto.setText("Ocultar texto" if visible else "Ver texto")
         self._render_lineas(self._fila_actual())
 

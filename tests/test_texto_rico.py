@@ -2,7 +2,7 @@ import pytest
 from docx import Document
 from PySide6.QtGui import QTextListFormat
 
-from app import db, pdf, texto_rico, ui_items, ui_main, word
+from app import db, pdf, texto_rico, ui_comun, ui_items, ui_main, word
 from app.calculo import Linea
 from app.ui_texto import EditorTextoDialog
 
@@ -153,3 +153,40 @@ def test_la_tabla_muestra_el_formato(cot, qapp):
     assert "<b>reforzado</b>" in html and "<li>uno</li>" in html
     d.btn_ver_texto.setChecked(False)
     assert d.tabla.item(0, ui_items.COL_DESC).data(ROL_HTML).endswith("…</p>")
+
+
+def test_menu_contextual_de_items(cot, qapp, monkeypatch):
+    d = ui_items.ItemsDialog(1, "COT-2026-0001", editable=True)
+    textos = lambda m: [a.text() for a in m.actions() if a.text()]
+    menu = d.construir_menu(0)
+    assert {"Editar título y texto…", "Ocultar texto", "Duplicar", "Eliminar"} <= set(textos(menu))
+    d.alternar_texto_fila(0)                                       # solo este ítem
+    assert d.tabla.item(0, ui_items.COL_DESC).data(ui_comun.ROL_HTML).endswith("…</p>")
+    assert "Mostrar texto completo" in textos(d.construir_menu(0))
+    d.duplicar_item(0)
+    assert len(d.lineas) == 2 and d.lineas[1].descripcion == d.lineas[0].descripcion and d.lineas[1] is not d.lineas[0]
+    d.tabla.setCurrentCell(1, 1)
+    d.quitar()
+    assert len(d.lineas) == 1
+    pedidos = []
+    monkeypatch.setattr(ui_items.ItemsDialog, "_mostrar_menu", staticmethod(lambda m, p: pedidos.append(m)))
+    from PySide6.QtCore import QPoint
+    d.show()
+    d._menu_contextual(QPoint(30, d.tabla.rowViewportPosition(0) + 5))
+    assert pedidos
+
+
+def test_menu_solo_lectura(cot, qapp):
+    d = ui_items.ItemsDialog(1, "COT-2026-0001", editable=False)
+    nombres = [a.text() for a in d.construir_menu(0).actions()]
+    assert "Eliminar" not in nombres and "Ocultar texto" in nombres
+
+
+def test_texto_muy_largo_se_ve_completo(cot, qapp):
+    largo = "".join(f"<p>Párrafo {i}: texto de ejemplo.</p>" for i in range(60)) + "<p><b>FIN</b></p>"
+    d = ui_items.ItemsDialog(1, "COT-2026-0001", editable=True)
+    d.lineas[0].descripcion = largo
+    d.show()
+    d._render_lineas(0)
+    assert d.tabla.rowHeight(0) > 60 * 15                       # la fila crece hasta mostrar todo el texto
+    assert d.tabla.verticalScrollMode() == d.tabla.ScrollMode.ScrollPerPixel     # y se puede recorrer completa
