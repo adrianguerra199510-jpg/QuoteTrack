@@ -50,3 +50,16 @@ def test_editor_cambia_cliente(conn, dos_clientes, qapp):
     assert d._guardar_en_db()
     assert conn.execute("SELECT cliente_id FROM cotizaciones WHERE id = 1").fetchone()[0] == dos_clientes
     assert not ui_items.ItemsDialog(1, "COT-2026-0001", editable=False).cliente_combo.isEnabled()
+
+
+def test_nueva_cotizacion_pregunta_cliente_y_empresa(tab, conn, dos_clientes, monkeypatch):
+    from app.ui_main import NuevaCotizacionDialog
+    d = NuevaCotizacionDialog()
+    assert d.cliente_combo.count() == 2 and d.empresa_combo.currentData() == db.empresa_predeterminada_id(conn)
+    d.cliente_combo.setCurrentIndex(d.cliente_combo.findData(dos_clientes))
+    assert d.datos() == (dos_clientes, db.empresa_predeterminada_id(conn))
+    monkeypatch.setattr(ui_main.CotizacionesTab, "_pedir_cliente_y_empresa", staticmethod(lambda p: None))
+    antes = tab.tabla.rowCount()
+    tab.nueva_cotizacion()                       # se cancela: no crea nada
+    assert tab.tabla.rowCount() == antes
+    assert not hasattr(tab, "cliente_combo")     # ya no hay selectores fijos arriba

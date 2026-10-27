@@ -136,13 +136,17 @@ def test_ui_empresas_tab(conn, qapp, monkeypatch):
     assert avisos and "cotización" in avisos[0] and tab.tabla.rowCount() == 2
 
 
-def test_ui_nueva_cotizacion_con_empresa_elegida(conn, qapp):
+def test_ui_nueva_cotizacion_con_empresa_elegida(conn, qapp, monkeypatch):
     b = db.guardar_empresa({"nombre": "Empresa B"}, conn)
     w = ui_main.MainWindow()
     tab = w.cotizaciones_tab
     tab.refrescar()
-    tab.empresa_combo.setCurrentIndex(tab.empresa_combo.findData(b))
+    cliente = conn.execute("SELECT id FROM clientes").fetchone()["id"]
+    pedidos = []
+    monkeypatch.setattr(ui_main.CotizacionesTab, "_pedir_cliente_y_empresa",
+                        staticmethod(lambda p: pedidos.append(1) or (cliente, b)))
     tab.nueva_cotizacion()
+    assert pedidos
     fila = conn.execute("SELECT empresa_id FROM cotizaciones ORDER BY id DESC LIMIT 1").fetchone()
     assert fila["empresa_id"] == b
     assert tab.tabla.item(0, 3).text() == "Empresa B"

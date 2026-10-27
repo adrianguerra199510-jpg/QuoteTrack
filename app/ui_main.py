@@ -173,24 +173,16 @@ class CotizacionesTab(QWidget):
         lay.addWidget(encabezado_pagina("Cotizaciones", "Crea, envía y da seguimiento a tus cotizaciones."))
 
         top = QHBoxLayout()
-        self.cliente_combo = QComboBox()
-        self.cliente_combo.setMinimumWidth(220)
-        self.empresa_combo = QComboBox()
-        self.empresa_combo.setMinimumWidth(200)
+        top.addStretch()
         self.btn_nueva = boton("Nueva cotización", "file-plus", "primario")
         self.btn_nueva.clicked.connect(self.nueva_cotizacion)
-        top.addWidget(QLabel("Cliente:"))
-        top.addWidget(self.cliente_combo)
-        top.addWidget(QLabel("Empresa:"))
-        top.addWidget(self.empresa_combo)
-        top.addStretch()
         top.addWidget(self.btn_nueva)
         lay.addLayout(top)
 
         self.filtro = FiltroBar(list(db.TRANSICIONES_COTIZACION), lambda: self.refrescar())
         lay.addLayout(self.filtro)
 
-        self.tabla = tabla_estandar(["Número", "Cliente", "Proyecto", "Empresa", "Fecha", "Estado", "Total"], estirar=1)
+        self.tabla = tabla_estandar(["Número", "Cliente", "Proyecto", "Empresa", "Fecha", "Estado", "Total"], estirar=2)
         self.tabla.cellDoubleClicked.connect(lambda *_: self.editar_items())
         self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
         self.tabla.setContextMenuPolicy(Qt.CustomContextMenu)          # clic derecho sobre una cotización
@@ -232,22 +224,7 @@ class CotizacionesTab(QWidget):
     def refrescar(self):
         conn = db.get_connection()
         clientes = conn.execute("SELECT id, nombre FROM clientes ORDER BY nombre").fetchall()
-        cliente_actual = self.cliente_combo.currentData()
-        self.cliente_combo.clear()
-        for c in clientes:
-            self.cliente_combo.addItem(c["nombre"], c["id"])
-        idx = self.cliente_combo.findData(cliente_actual)
-        if idx >= 0:
-            self.cliente_combo.setCurrentIndex(idx)
         self.filtro.cargar_clientes(clientes)
-
-        empresa_actual = self.empresa_combo.currentData() or db.empresa_predeterminada_id(conn)
-        self.empresa_combo.clear()
-        for e in db.listar_empresas(conn):
-            self.empresa_combo.addItem(e["nombre"], e["id"])
-        idx = self.empresa_combo.findData(empresa_actual)
-        if idx >= 0:
-            self.empresa_combo.setCurrentIndex(idx)
 
         where, params = self.filtro.clausula("c", "estado")
         filas = conn.execute(f"""
@@ -466,16 +443,61 @@ class CotizacionesTab(QWidget):
         if dlg.exec():
             self.refrescar()
 
+    @staticmethod
+    def _pedir_cliente_y_empresa(parent):
+        """Pregunta el cliente y la empresa de la nueva cotización; devuelve (cliente_id, empresa_id) o None."""
+        dlg = NuevaCotizacionDialog(parent)
+        return dlg.datos() if dlg.exec() else None
+
     def nueva_cotizacion(self):
-        cliente_id = self.cliente_combo.currentData()
-        if cliente_id is None:
+        conn = db.get_connection()
+        hay_clientes = conn.execute("SELECT 1 FROM clientes LIMIT 1").fetchone() is not None
+        conn.close()
+        if not hay_clientes:
             QMessageBox.warning(self, "Falta cliente", "Agrega un cliente primero en la sección Clientes.")
             return
+        elegido = self._pedir_cliente_y_empresa(self)
+        if elegido is None:
+            return
+        cliente_id, empresa_id = elegido
         conn = db.get_connection()
-        db.crear_cotizacion(cliente_id, conn, self.empresa_combo.currentData())
+        db.crear_cotizacion(cliente_id, conn, empresa_id)
         conn.close()
         self.refrescar()
         self.tabla.setCurrentCell(0, 0)
+
+
+class NuevaCotizacionDialog(QDialog):
+    """Elige el cliente y la empresa que cotiza antes de crear la cotización."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Nueva cotización")
+        self.setMinimumWidth(420)
+        conn = db.get_connection()
+        clientes = conn.execute("SELECT id, nombre FROM clientes ORDER BY nombre").fetchall()
+        empresas = db.listar_empresas(conn)
+        predeterminada = db.empresa_predeterminada_id(conn)
+        conn.close()
+        form = QFormLayout(self)
+        form.setContentsMargins(20, 18, 20, 14)
+        self.cliente_combo = QComboBox()
+        for c in clientes:
+            self.cliente_combo.addItem(c["nombre"], c["id"])
+        self.empresa_combo = QComboBox()
+        for e in empresas:
+            self.empresa_combo.addItem(e["nombre"], e["id"])
+        self.empresa_combo.setCurrentIndex(max(self.empresa_combo.findData(predeterminada), 0))
+        form.addRow("Cliente:", self.cliente_combo)
+        form.addRow("Empresa que cotiza:", self.empresa_combo)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("Crear cotización")
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        form.addRow(bb)
+
+    def datos(self):
+        return self.cliente_combo.currentData(), self.empresa_combo.currentData()
 
 
 class NotasDialog(QDialog):
