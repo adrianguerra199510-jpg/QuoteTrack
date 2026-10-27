@@ -177,6 +177,23 @@ def _tabla_totales(t):
     return tabla
 
 
+def _bloque_etapa(estilos, doc_datos):
+    """Facturas por etapas: concepto y resumen de lo facturado de la cotización."""
+    elementos = []
+    if doc_datos.concepto:
+        elementos += [Paragraph(f"<b>Concepto:</b> {_esc(doc_datos.concepto)}", estilos["Normal"]), Spacer(1, 0.4 * cm)]
+    if doc_datos.resumen:
+        filas = [[etiqueta, _dinero(monto)] for etiqueta, monto, _ultimo in doc_datos.resumen]
+        t = Table(filas, colWidths=[7 * cm, 3.8 * cm], hAlign="RIGHT")
+        t.setStyle(TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+            ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#444444")),
+            ("FONTNAME", (0, len(filas) - 1), (-1, len(filas) - 1), "Helvetica-Bold"),
+        ]))
+        elementos += [t, Spacer(1, 0.4 * cm)]
+    return elementos
+
+
 def _tabla_items(estilos, lineas, tasa):
     """Tabla de ítems con código jerárquico (01, 01.1…); los grupos van en negrita con su subtotal."""
     cods, imps = calculo.codigos(lineas), calculo.importes(lineas)
@@ -215,6 +232,7 @@ def _construir(doc_datos: documento.Documento, ruta: str) -> None:
         estilos, doc_datos.titulo, doc_datos.numero, doc_datos.fecha, doc_datos.cliente, extra=doc_datos.extra)
     if doc_datos.lineas is not None:
         elementos += [_tabla_items(estilos, doc_datos.lineas, doc_datos.totales.tasa), Spacer(1, 0.5 * cm)]
+    elementos += _bloque_etapa(estilos, doc_datos)
     elementos.append(_tabla_totales(doc_datos.totales))
     elementos += _bloque_notas(estilos, doc_datos.notas, doc_datos.titulo_notas)
     pdf.build(elementos)

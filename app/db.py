@@ -148,8 +148,6 @@ CREATE TABLE IF NOT EXISTS concepto_insumos (
     ref_categoria TEXT NOT NULL DEFAULT ''
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_facturas_cotizacion
-    ON facturas(cotizacion_id) WHERE cotizacion_id IS NOT NULL;
 """
 
 
@@ -231,6 +229,10 @@ def init_db() -> None:
     _agregar_columna(conn, "cotizacion_items", "modalidad", "TEXT NOT NULL DEFAULT 'servicio'")
     _agregar_columna(conn, "cotizacion_items", "apu_base", "REAL NOT NULL DEFAULT 1")
     _agregar_columna(conn, "cotizacion_items", "titulo", "TEXT NOT NULL DEFAULT ''")
+    # Facturas por etapas: una cotización puede tener varias facturas (abonos), cada una con su concepto y porcentaje
+    conn.execute("DROP INDEX IF EXISTS idx_facturas_cotizacion")
+    _agregar_columna(conn, "facturas", "concepto", "TEXT NOT NULL DEFAULT ''")
+    _agregar_columna(conn, "facturas", "porcentaje", "REAL")       # % del total de la cotización (NULL = factura anterior)
     for cat in calculo.CATEGORIAS:
         _agregar_columna(conn, "cotizaciones", f"apu_coef_{cat}", "REAL")   # en %, NULL = valor por defecto
     # Migración: origen de los conceptos de la biblioteca (bases de datos de costos importadas)
@@ -565,25 +567,62 @@ def cambiar_estado_cotizacion(cotizacion_id: int, nuevo: str, conn: sqlite3.Conn
     conn.commit()
 
 
-def generar_factura(cotizacion_id: int, conn: sqlite3.Connection) -> str:
-    """Crea la factura de una cotización aprobada y devuelve su número.
-    Lanza ValueError si la cotización no está aprobada o ya tiene factura."""
+def resumen_facturacion(cotizacion_id: int, conn: sqlite3.Connection) -> dict:
+    """Total de la cotización, lo ya facturado, el saldo por facturar y la cantidad de facturas emitidas."""
+    cot = conn.execute("SELECT total FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()
+    if cot is None:
+        raise ValueError("La cotización no existe.")
+    fila = conn.execute("SELECT COALESCE(SUM(total), 0) AS t, COUNT(*) AS n FROM facturas WHERE cotizacion_id = ?",
+                        (cotizacion_id,)).fetchone()
+    facturado = round(fila["t"], 2)
+    return {"total": cot["total"], "facturado": facturado, "saldo": round(cot["total"] - facturado, 2), "facturas": fila["n"]}
+
+
+def generar_factura(cotizacion_id: int, conn: sqlite3.Connection, porcentaje: float | None = None,
+                    monto: float | None = None, concepto: str | None = None) -> str:
+    """Crea una factura de una cotización aprobada y devuelve su número.
+
+    Sin `porcentaje` ni `monto` factura todo el saldo pendiente. `porcentaje` es la parte del total de la
+    cotización (p. ej. 30 para un abono del 30%); `monto` es el importe exacto. Una cotización puede tener
+    varias facturas mientras no se supere el 100%. Lanza ValueError si no está aprobada, si no queda saldo o
+    si el importe es inválido o excede el saldo."""
     cot = conn.execute("SELECT * FROM cotizaciones WHERE id = ?", (cotizacion_id,)).fetchone()
     if cot is None:
         raise ValueError("La cotización no existe.")
     if cot["estado"] != "aprobada":
         raise ValueError("Solo se puede facturar una cotización aprobada.")
-    existente = conn.execute(
-        "SELECT numero FROM facturas WHERE cotizacion_id = ?", (cotizacion_id,)
-    ).fetchone()
-    if existente:
-        raise ValueError(f"Esta cotización ya tiene la factura {existente['numero']}.")
+    r = resumen_facturacion(cotizacion_id, conn)
+    if r["total"] <= 0:
+        raise ValueError("La cotización no tiene un total que facturar.")
+    if r["saldo"] <= 0.005:
+        raise ValueError("Esta cotización ya está facturada por completo.")
+    if monto is None and porcentaje is None:
+        monto = r["saldo"]
+    elif monto is None:
+        if not 0 < porcentaje <= 100:
+            raise ValueError("El porcentaje debe estar entre 0 y 100.")
+        monto = round(r["total"] * porcentaje / 100, 2)
+    if monto <= 0:
+        raise ValueError("El monto de la factura debe ser mayor que cero.")
+    if monto > r["saldo"] + 0.005:
+        raise ValueError(f"El monto excede el saldo por facturar (B/. {r['saldo']:,.2f}).")
+    if abs(monto - r["saldo"]) <= 0.01:
+        monto = r["saldo"]                         # la última factura toma el saldo exacto (sin centavos sueltos)
+    monto = round(monto, 2)
+    pct = round(monto / r["total"] * 100, 4)
+    if concepto is None:
+        if r["facturas"] == 0 and monto == r["saldo"]:
+            concepto = ""                          # factura única por el total, como antes
+        elif monto == r["saldo"]:
+            concepto = "Saldo final"
+        else:
+            concepto = f"Abono {r['facturas'] + 1} ({pct:g}%)"
     numero = next_numero("FAC", "facturas", conn)
     conn.execute(
-        "INSERT INTO facturas (numero, cotizacion_id, cliente_id, fecha, estado_pago, total, notas, empresa_id, titulo_notas) "
-        "VALUES (?, ?, ?, ?, 'pendiente', ?, ?, ?, ?)",
-        (numero, cotizacion_id, cot["cliente_id"], date.today().isoformat(), cot["total"],
-         cot["notas"] or "", cot["empresa_id"], cot["titulo_notas"] or ""),
+        "INSERT INTO facturas (numero, cotizacion_id, cliente_id, fecha, estado_pago, total, notas, empresa_id, "
+        "titulo_notas, concepto, porcentaje) VALUES (?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, ?, ?)",
+        (numero, cotizacion_id, cot["cliente_id"], date.today().isoformat(), monto,
+         cot["notas"] or "", cot["empresa_id"], cot["titulo_notas"] or "", concepto.strip(), pct),
     )
     conn.commit()
     return numero

@@ -16,6 +16,8 @@ class Documento:
     totales: calculo.Totales = None
     notas: str = ""
     titulo_notas: str = ""           # vacío = «Alcance, exclusiones y condiciones»
+    concepto: str = ""               # facturas por etapas: «Abono inicial (30%)»…
+    resumen: list = field(default_factory=list)    # [(etiqueta, monto, es_ultimo)] total, facturado antes, esta factura, saldo
 
     @property
     def nombre_archivo(self) -> str:
@@ -54,9 +56,12 @@ def de_factura(factura_id: int, mostrar_estado: bool | None = None) -> Documento
         cliente = conn.execute("SELECT * FROM clientes WHERE id = ?", (fac["cliente_id"],)).fetchone()
         empresa = db.empresa_de_factura(factura_id, conn)
         cot = None
+        resumen = []
         if fac["cotizacion_id"]:
             cot = conn.execute("SELECT numero FROM cotizaciones WHERE id = ?", (fac["cotizacion_id"],)).fetchone()
             totales = db.totales_cotizacion(fac["cotizacion_id"], conn)
+            if fac["porcentaje"] is not None:
+                totales, resumen = _desglose_etapa(fac, totales, conn)
         else:  # sin cotización de origen: se deriva del total con la tasa de la empresa
             tasa = (empresa["itbms_tasa"] / 100) if empresa else 0.0
             subtotal = round(fac["total"] / (1 + tasa), 2)
@@ -71,7 +76,32 @@ def de_factura(factura_id: int, mostrar_estado: bool | None = None) -> Documento
         extra.append(("Fecha de pago", fac["fecha_pago"]))
     if cot:
         extra.append(("Cotización de origen", cot["numero"]))
-    return Documento("FACTURA", fac["numero"], fac["fecha"], cliente, empresa, extra, None, totales, fac["notas"], fac["titulo_notas"] or "")
+    concepto = fac["concepto"] or ""
+    if fac["porcentaje"] is not None and concepto and fac["porcentaje"] < 99.9999:
+        concepto = f"{concepto} — {fac['porcentaje']:g}% del total de la cotización"
+    return Documento("FACTURA", fac["numero"], fac["fecha"], cliente, empresa, extra, None, totales, fac["notas"],
+                     fac["titulo_notas"] or "", concepto, resumen)
+
+
+def _desglose_etapa(fac, totales_cot: calculo.Totales, conn):
+    """Totales de una factura por etapas y su resumen (total, facturado antes, esta factura, saldo).
+
+    El ITBMS se reparte con los acumulados de cada factura, así la suma de todas las facturas da exactamente
+    el ITBMS de la cotización. Una factura única por el total conserva el desglose completo de la cotización."""
+    previas = conn.execute("SELECT COALESCE(SUM(total), 0) AS t FROM facturas WHERE cotizacion_id = ? AND id < ?",
+                           (fac["cotizacion_id"], fac["id"])).fetchone()["t"]
+    total_cot = totales_cot.total
+    acumulado = previas + fac["total"]
+    saldo = round(total_cot - acumulado, 2)
+    if previas == 0 and abs(saldo) <= 0.005:
+        return totales_cot, []
+    proporcion = lambda x: round(totales_cot.itbms * x / total_cot, 2) if total_cot else 0.0
+    itbms = round(proporcion(acumulado) - proporcion(previas), 2)
+    parcial = calculo.Totales(subtotal=round(fac["total"] - itbms, 2), tasa=totales_cot.tasa, itbms=itbms,
+                              total=fac["total"])
+    resumen = [("Total de la cotización:", total_cot, False), ("Facturado anteriormente:", round(previas, 2), False),
+               ("Esta factura:", fac["total"], False), ("Saldo pendiente:", max(saldo, 0.0), True)]
+    return parcial, resumen
 
 
 def etiquetas_totales(t: calculo.Totales) -> list[tuple[str, float, bool]]:

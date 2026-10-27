@@ -169,6 +169,8 @@ def test_menu_generar_factura(tab, conn, monkeypatch):
     tab.refrescar()
     tab.tabla.setCurrentCell(0, 0)
     monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a: None))
+    monkeypatch.setattr(ui_main.CotizacionesTab, "_pedir_factura",
+                        staticmethod(lambda p, n, r: {"monto": r["saldo"], "concepto": None}))
     disparar(tab.construir_menu(), "Generar factura")
     assert conn.execute("SELECT numero FROM facturas").fetchone()["numero"] == "FAC-2026-0001"
 

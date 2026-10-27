@@ -6,7 +6,7 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame,
     QHBoxLayout, QInputDialog,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QStackedWidget,
+    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QStackedWidget,
     QMenu, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -410,13 +410,27 @@ class CotizacionesTab(QWidget):
         if sel:
             vista_previa(self, "cotizacion", sel[0], sel[1])
 
+    @staticmethod
+    def _pedir_factura(parent, numero, resumen):
+        """Pregunta el importe y el concepto de la factura; devuelve {'monto', 'concepto'} o None si se cancela."""
+        dlg = FacturaEtapaDialog(numero, resumen, parent)
+        return dlg.datos() if dlg.exec() else None
+
     def generar_factura(self):
         sel = self._seleccionada()
         if not sel:
             return
         conn = db.get_connection()
         try:
-            numero = db.generar_factura(sel[0], conn)
+            if sel[2] != "aprobada":
+                raise ValueError("Solo se puede facturar una cotización aprobada.")
+            resumen = db.resumen_facturacion(sel[0], conn)
+            if resumen["saldo"] <= 0.005:
+                raise ValueError("Esta cotización ya está facturada por completo.")
+            datos = self._pedir_factura(self, sel[1], resumen)
+            if datos is None:
+                return
+            numero = db.generar_factura(sel[0], conn, monto=datos["monto"], concepto=datos["concepto"])
         except ValueError as e:
             QMessageBox.warning(self, "Generar factura", str(e))
             return
@@ -465,6 +479,89 @@ class CotizacionesTab(QWidget):
         conn.close()
         self.refrescar()
         self.tabla.setCurrentCell(0, 0)
+
+
+class FacturaEtapaDialog(QDialog):
+    """Factura por etapas: porcentaje o monto de la cotización que se factura ahora (abono, avance, saldo…)."""
+
+    ATAJOS = (25, 30, 40, 50)
+
+    def __init__(self, numero, resumen, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Generar factura · {numero}")
+        self.setMinimumWidth(480)
+        self.total, self.saldo = resumen["total"], resumen["saldo"]
+        self.facturas = resumen["facturas"]
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 18, 20, 14)
+        info = QLabel(
+            f"Total de la cotización: <b>B/. {self.total:,.2f}</b><br>"
+            f"Ya facturado: B/. {resumen['facturado']:,.2f} ({resumen['facturas']} factura(s))<br>"
+            f"Saldo por facturar: <b>B/. {self.saldo:,.2f}</b>")
+        lay.addWidget(info)
+        form = QFormLayout()
+        self.pct = QDoubleSpinBox()
+        self.pct.setDecimals(2)
+        self.pct.setRange(0.01, 100)
+        self.pct.setSuffix(" % del total")
+        self.monto = QDoubleSpinBox()
+        self.monto.setDecimals(2)
+        self.monto.setRange(0.01, max(self.saldo, 0.01))
+        self.monto.setPrefix("B/. ")
+        self.monto.setGroupSeparatorShown(True)
+        form.addRow("Porcentaje:", self.pct)
+        form.addRow("Monto:", self.monto)
+        atajos = QHBoxLayout()
+        for p in self.ATAJOS:
+            b = QPushButton(f"{p}%")
+            b.clicked.connect(lambda _=False, p=p: self._porcentaje(p))
+            atajos.addWidget(b)
+        saldo_btn = QPushButton("Todo el saldo")
+        saldo_btn.clicked.connect(lambda: self._monto(self.saldo))
+        atajos.addWidget(saldo_btn)
+        form.addRow("Atajos:", atajos)
+        self.concepto = QLineEdit()
+        form.addRow("Concepto:", self.concepto)
+        lay.addLayout(form)
+        self.resultado = QLabel()
+        lay.addWidget(self.resultado)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("Generar factura")
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.pct.valueChanged.connect(lambda v: self._monto(round(self.total * v / 100, 2), desde_pct=True))
+        self.monto.valueChanged.connect(lambda v: self._actualizar(v))
+        self._monto(self.saldo)
+
+    def _porcentaje(self, p):
+        self._monto(min(round(self.total * p / 100, 2), self.saldo))
+
+    def _monto(self, valor, desde_pct=False):
+        valor = max(0.01, min(valor, self.saldo))
+        self.monto.blockSignals(True)
+        self.monto.setValue(valor)
+        self.monto.blockSignals(False)
+        self._actualizar(valor, actualizar_pct=not desde_pct)
+
+    def _actualizar(self, monto, actualizar_pct=True):
+        if actualizar_pct:
+            self.pct.blockSignals(True)
+            self.pct.setValue(min(100, round(monto / self.total * 100, 2)))
+            self.pct.blockSignals(False)
+        resta = round(self.saldo - monto, 2)
+        self.concepto.setPlaceholderText(self._concepto_sugerido(monto))
+        self.resultado.setText(f"Esta factura: <b>B/. {monto:,.2f}</b> · saldo después: B/. {max(resta, 0):,.2f}")
+
+    def _concepto_sugerido(self, monto) -> str:
+        if abs(monto - self.saldo) <= 0.01:
+            return "" if self.facturas == 0 else "Saldo final"
+        return f"Abono {self.facturas + 1} ({monto / self.total * 100:.2f}%)".replace(".00%", "%")
+
+    def datos(self):
+        escrito = self.concepto.text().strip()
+        return {"monto": round(self.monto.value(), 2),
+                "concepto": escrito if escrito else None}      # None = que el sistema proponga el concepto
 
 
 class NuevaCotizacionDialog(QDialog):
@@ -547,7 +644,7 @@ class FacturasTab(QWidget):
         lay.addLayout(self.filtro)
         lay.addLayout(self.filtro.con_extras(lambda: self.refrescar()))      # empresa y rango de fechas
         self.tabla = tabla_estandar(
-            ["Número", "Cliente", "Empresa", "Fecha", "Estado de pago", "Fecha de pago", "Total"], estirar=1)
+            ["Número", "Cliente", "Empresa", "Fecha", "Estado de pago", "Fecha de pago", "Total", "Concepto"], estirar=1)
         self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
         self.tabla.setContextMenuPolicy(Qt.CustomContextMenu)          # clic derecho sobre una factura
         self.tabla.customContextMenuRequested.connect(self._menu_contextual)
@@ -602,7 +699,7 @@ class FacturasTab(QWidget):
         where, params = self.filtro.clausula("f", "estado_pago")
         filas = conn.execute(f"""
             SELECT f.id, f.numero, cl.nombre AS cliente, e.nombre AS empresa, f.fecha, f.estado_pago,
-                   f.fecha_pago, f.total
+                   f.fecha_pago, f.total, f.concepto
             FROM facturas f JOIN clientes cl ON cl.id = f.cliente_id
             LEFT JOIN empresas e ON e.id = f.empresa_id
             {where}
@@ -615,7 +712,7 @@ class FacturasTab(QWidget):
             celdas = [QTableWidgetItem(fila["numero"]), QTableWidgetItem(fila["cliente"]),
                       QTableWidgetItem(fila["empresa"] or ""), QTableWidgetItem(fila["fecha"]),
                       celda_estado(fila["estado_pago"]), QTableWidgetItem(fila["fecha_pago"] or ""),
-                      celda_dinero(fila["total"])]
+                      celda_dinero(fila["total"]), QTableWidgetItem(fila["concepto"] or "")]
             celdas[0].setData(Qt.UserRole, fila["id"])
             for c, it in enumerate(celdas):
                 if fila["estado_pago"] == "vencida" and c != FAC_ESTADO:

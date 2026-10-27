@@ -224,6 +224,23 @@ def _tabla_totales(doc, totales) -> None:
     _anchos(t, [7.0, 3.8])
 
 
+def _bloque_etapa(doc, d) -> None:
+    """Facturas por etapas: concepto y resumen de lo facturado de la cotización."""
+    if d.concepto:
+        p = _parrafo(doc, "", antes=6, despues=6)
+        _texto(p, "Concepto: ", negrita=True)
+        _texto(p, d.concepto)
+    if d.resumen:
+        t = doc.add_table(rows=len(d.resumen), cols=2)
+        _sin_bordes(t)
+        t.alignment = WD_TABLE_ALIGNMENT.RIGHT
+        for fila, (etiqueta, monto, ultimo) in zip(t.rows, d.resumen):
+            _celda_texto(fila.cells[0], etiqueta, WD_ALIGN_PARAGRAPH.RIGHT, negrita=ultimo)
+            _celda_texto(fila.cells[1], _dinero(monto), WD_ALIGN_PARAGRAPH.RIGHT, negrita=ultimo)
+        _anchos(t, [7.0, 3.8])
+        _parrafo(doc, "", despues=4)
+
+
 def _notas(doc, notas, titulo="") -> None:
     """Título y notas con viñetas reales de Word (editables); las líneas en mayúsculas son encabezados de sección."""
     if not (notas or "").strip():
@@ -260,6 +277,7 @@ def _construir(d: documento.Documento, ruta: str) -> None:
     _datos_cliente(doc, d)
     if d.lineas is not None:
         _tabla_items(doc, d.lineas, d.totales.tasa)
+    _bloque_etapa(doc, d)
     _tabla_totales(doc, d.totales)
     _notas(doc, d.notas, d.titulo_notas)
     doc.save(ruta)
