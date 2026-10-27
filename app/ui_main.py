@@ -545,6 +545,7 @@ class FacturasTab(QWidget):
         lay.addWidget(encabezado_pagina("Facturas", "Seguimiento de cobros: pendientes, pagadas y vencidas."))
         self.filtro = FiltroBar(["pendiente", "pagada", "vencida"], lambda: self.refrescar())
         lay.addLayout(self.filtro)
+        lay.addLayout(self.filtro.con_extras(lambda: self.refrescar()))      # empresa y rango de fechas
         self.tabla = tabla_estandar(
             ["Número", "Cliente", "Empresa", "Fecha", "Estado de pago", "Fecha de pago", "Total"], estirar=1)
         self.tabla.currentCellChanged.connect(lambda *_: self._actualizar_acciones())
@@ -560,6 +561,8 @@ class FacturasTab(QWidget):
         acciones.addWidget(self.btn_pagada)
         acciones.addWidget(self.btn_vencida)
         acciones.addStretch()
+        lay.addLayout(acciones)
+        acciones = QHBoxLayout()
         self.btn_notas = boton("Editar notas", "edit")
         self.btn_notas.clicked.connect(self.editar_notas)
         self.btn_pdf = boton("Exportar PDF", "download")
@@ -572,6 +575,7 @@ class FacturasTab(QWidget):
         acciones.addWidget(self.btn_vista)
         acciones.addWidget(self.btn_pdf)
         acciones.addWidget(self.btn_word)
+        acciones.addStretch()
         lay.addLayout(acciones)
         self.refrescar()
 
@@ -594,6 +598,7 @@ class FacturasTab(QWidget):
         from PySide6.QtGui import QBrush, QColor
         conn = db.get_connection()
         self.filtro.cargar_clientes(conn.execute("SELECT id, nombre FROM clientes ORDER BY nombre").fetchall())
+        self.filtro.cargar_empresas(db.listar_empresas(conn))
         where, params = self.filtro.clausula("f", "estado_pago")
         filas = conn.execute(f"""
             SELECT f.id, f.numero, cl.nombre AS cliente, e.nombre AS empresa, f.fecha, f.estado_pago,

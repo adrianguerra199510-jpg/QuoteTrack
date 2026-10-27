@@ -1,9 +1,9 @@
 """Piezas de interfaz compartidas: botones con icono, encabezados de página, filtros y utilidades."""
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QDate, QSize, Qt
 from PySide6.QtGui import QAbstractTextDocumentLayout, QKeySequence, QPalette, QShortcut, QTextDocument
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
-    QApplication, QPushButton, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QApplication, QDateEdit, QPushButton, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from app import estilo, iconos
@@ -137,8 +137,72 @@ class FiltroBar(QHBoxLayout):
         self.addWidget(self.cliente)
         self.addWidget(self.estado)
         self.cliente.currentIndexChanged.connect(lambda *_: al_cambiar())
+        self._al_cambiar = al_cambiar
         self.busqueda.textChanged.connect(lambda *_: al_cambiar())
         self.estado.currentIndexChanged.connect(lambda *_: al_cambiar())
+
+    def con_extras(self, al_cambiar) -> QHBoxLayout:
+        """Segunda fila de filtros (empresa y rango de fechas) con botón para limpiarlos todos. Devuelve la fila."""
+        self._al_cambiar = al_cambiar
+        fila = QHBoxLayout()
+        self.empresa = QComboBox()
+        self.empresa.setMinimumWidth(200)
+        self.empresa.addItem("Todas las empresas", None)
+        self.desde, self.hasta = self._selector_fecha(), self._selector_fecha()
+        self.btn_limpiar = QPushButton("Limpiar filtros")
+        self.btn_limpiar.setIcon(iconos.icono("x", estilo.AZUL_OSCURO, 16))
+        self.btn_limpiar.setCursor(Qt.PointingHandCursor)
+        self.btn_limpiar.clicked.connect(self.limpiar)
+        fila.addWidget(self.empresa)
+        fila.addWidget(QLabel("Desde:"))
+        fila.addWidget(self.desde)
+        fila.addWidget(QLabel("Hasta:"))
+        fila.addWidget(self.hasta)
+        fila.addStretch()
+        fila.addWidget(self.btn_limpiar)
+        self.empresa.currentIndexChanged.connect(lambda *_: al_cambiar())
+        self.desde.dateChanged.connect(lambda *_: al_cambiar())
+        self.hasta.dateChanged.connect(lambda *_: al_cambiar())
+        return fila
+
+    @staticmethod
+    def _selector_fecha() -> QDateEdit:
+        """Fecha con calendario; el valor mínimo se muestra como «Sin límite» y significa que no filtra."""
+        d = QDateEdit()
+        d.setCalendarPopup(True)
+        d.setDisplayFormat("yyyy-MM-dd")
+        d.setMinimumDate(QDate(2000, 1, 1))
+        d.setSpecialValueText("Sin límite")
+        d.setDate(d.minimumDate())
+        return d
+
+    def cargar_empresas(self, empresas) -> None:
+        actual = self.empresa.currentData()
+        self.empresa.blockSignals(True)
+        self.empresa.clear()
+        self.empresa.addItem("Todas las empresas", None)
+        for e in empresas:
+            self.empresa.addItem(e["nombre"], e["id"])
+        self.empresa.setCurrentIndex(max(self.empresa.findData(actual), 0))
+        self.empresa.blockSignals(False)
+
+    def limpiar(self) -> None:
+        """Quita todos los filtros y vuelve a consultar una sola vez."""
+        widgets = [self.busqueda, self.cliente, self.estado]
+        if hasattr(self, "empresa"):
+            widgets += [self.empresa, self.desde, self.hasta]
+        for w in widgets:
+            w.blockSignals(True)
+        self.busqueda.clear()
+        self.cliente.setCurrentIndex(0)
+        self.estado.setCurrentIndex(0)
+        if hasattr(self, "empresa"):
+            self.empresa.setCurrentIndex(0)
+            self.desde.setDate(self.desde.minimumDate())
+            self.hasta.setDate(self.hasta.minimumDate())
+        for w in widgets:
+            w.blockSignals(False)
+        self._al_cambiar()
 
     def cargar_clientes(self, clientes) -> None:
         """Rellena el filtro de cliente con filas (id, nombre) conservando la selección; no dispara el filtro."""
@@ -161,6 +225,16 @@ class FiltroBar(QHBoxLayout):
         if self.cliente.currentData() is not None:
             condiciones.append("cl.id = ?")
             params.append(self.cliente.currentData())
+        if hasattr(self, "empresa"):
+            if self.empresa.currentData() is not None:
+                condiciones.append(f"{alias}.empresa_id = ?")
+                params.append(self.empresa.currentData())
+            if self.desde.date() > self.desde.minimumDate():
+                condiciones.append(f"{alias}.fecha >= ?")
+                params.append(self.desde.date().toString("yyyy-MM-dd"))
+            if self.hasta.date() > self.hasta.minimumDate():
+                condiciones.append(f"{alias}.fecha <= ?")
+                params.append(self.hasta.date().toString("yyyy-MM-dd"))
         if self.estado.currentData():
             condiciones.append(f"{alias}.{columna_estado} = ?")
             params.append(self.estado.currentData())
