@@ -210,3 +210,27 @@ def test_eliminar_factura_pagada_desde_la_interfaz(cot, qapp, monkeypatch):
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a: QMessageBox.Yes))
     [a for a in f.construir_menu().actions() if a.text() == "Eliminar factura…"][0].trigger()
     assert facturas(cot) == [] and f.tabla.rowCount() == 0 and not f.btn_eliminar.isEnabled()
+
+
+def test_sello_pagado_en_pdf_y_word(cot, tmp_path, pdf_sin_comprimir):
+    db.generar_factura(1, cot)
+    fid = facturas(cot)[0]["id"]
+    pdf.exportar_factura(fid, str(tmp_path / "a.pdf"))
+    assert b"PAGADO" not in (tmp_path / "a.pdf").read_bytes()              # pendiente: sin sello
+    d = documento.de_factura(fid, False)
+    assert not d.pagado and d.fecha_pago == ""
+    db.marcar_factura_pagada(fid, "2026-03-15", cot)
+    d = documento.de_factura(fid, False)
+    assert d.pagado and d.fecha_pago == "2026-03-15"
+    pdf.exportar_factura(fid, str(tmp_path / "b.pdf"))
+    datos = (tmp_path / "b.pdf").read_bytes()
+    assert b"PAGADO" in datos and b"Fecha de pago: 2026-03-15" in datos
+    word.exportar_factura(fid, str(tmp_path / "b.docx"))
+    doc = Document(str(tmp_path / "b.docx"))
+    textos = [c.text for t in doc.tables for r in t.rows for c in r.cells]
+    assert any(t.startswith("PAGADO") and "Fecha de pago: 2026-03-15" in t for t in textos)
+
+
+def test_las_cotizaciones_no_llevan_sello(cot, tmp_path, pdf_sin_comprimir):
+    pdf.exportar_cotizacion(1, str(tmp_path / "c.pdf"))
+    assert b"PAGADO" not in (tmp_path / "c.pdf").read_bytes()

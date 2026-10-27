@@ -7,7 +7,7 @@ from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.pdfbase.pdfmetrics import stringWidth
-from reportlab.platypus import Image, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import Flowable, Image, KeepTogether, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
 from app import calculo, db, documento, texto_rico
 
@@ -180,6 +180,46 @@ def _tabla_totales(t):
     return tabla
 
 
+VERDE_PAGADO = "#15803D"
+
+
+class SelloPagado(Flowable):
+    """Sello «PAGADO» con la fecha de pago: recuadro verde con borde doble, ligeramente girado y semitransparente,
+    como un sello de goma. Se coloca al final de la factura."""
+
+    ANCHO, ALTO = 6.8 * cm, 2.3 * cm
+
+    def __init__(self, fecha_pago: str = ""):
+        super().__init__()
+        self.fecha_pago = fecha_pago
+        self.width, self.height = self.ANCHO, self.ALTO
+        self.hAlign = "RIGHT"
+
+    def wrap(self, *_):
+        return self.ANCHO, self.ALTO + 0.5 * cm
+
+    def draw(self):
+        c = self.canv
+        verde = colors.HexColor(VERDE_PAGADO)
+        c.saveState()
+        c.setStrokeAlpha(0.8)
+        c.setFillAlpha(0.85)
+        c.translate(self.ANCHO / 2, self.ALTO / 2 + 0.25 * cm)
+        c.rotate(6)
+        c.setStrokeColor(verde)
+        c.setFillColor(verde)
+        c.setLineWidth(2.4)
+        c.roundRect(-self.ANCHO / 2 + 0.2 * cm, -self.ALTO / 2, self.ANCHO - 0.4 * cm, self.ALTO, 6)
+        c.setLineWidth(0.8)
+        c.roundRect(-self.ANCHO / 2 + 0.35 * cm, -self.ALTO / 2 + 0.15 * cm, self.ANCHO - 0.7 * cm, self.ALTO - 0.3 * cm, 4)
+        c.setFont("Helvetica-Bold", 28)
+        c.drawCentredString(0, 0.08 * cm if self.fecha_pago else -0.3 * cm, "PAGADO")
+        if self.fecha_pago:
+            c.setFont("Helvetica", 10.5)
+            c.drawCentredString(0, -0.78 * cm, f"Fecha de pago: {self.fecha_pago}")
+        c.restoreState()
+
+
 def _bloque_etapa(estilos, doc_datos):
     """Facturas por etapas: concepto y resumen de lo facturado de la cotización."""
     elementos = []
@@ -238,6 +278,8 @@ def _construir(doc_datos: documento.Documento, ruta: str) -> None:
     elementos += _bloque_etapa(estilos, doc_datos)
     elementos.append(_tabla_totales(doc_datos.totales))
     elementos += _bloque_notas(estilos, doc_datos.notas, doc_datos.titulo_notas)
+    if doc_datos.pagado:                                    # sello al final, sin quedar solo en una hoja aparte
+        elementos += [Spacer(1, 0.3 * cm), SelloPagado(doc_datos.fecha_pago)]
     pdf.build(elementos)
 
 

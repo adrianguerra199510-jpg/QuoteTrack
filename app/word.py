@@ -241,6 +241,30 @@ def _bloque_etapa(doc, d) -> None:
         _parrafo(doc, "", despues=4)
 
 
+def _sello_pagado(doc, fecha_pago: str) -> None:
+    """Sello «PAGADO» con la fecha de pago al final de la factura: recuadro verde alineado a la derecha."""
+    _parrafo(doc, "", despues=6)
+    t = doc.add_table(rows=1, cols=1)
+    t.alignment = WD_TABLE_ALIGNMENT.RIGHT
+    bordes = OxmlElement("w:tblBorders")
+    for lado in ("top", "left", "bottom", "right"):
+        e = OxmlElement(f"w:{lado}")
+        e.set(qn("w:val"), "double")
+        e.set(qn("w:sz"), "12")
+        e.set(qn("w:color"), "15803D")
+        bordes.append(e)
+    _insertar_ordenado(t._tbl.tblPr, bordes, ORDEN_TBL_PR)
+    celda = t.rows[0].cells[0]
+    p = celda.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _texto(p, "PAGADO", negrita=True, tam=24, color="15803D")
+    if fecha_pago:
+        p2 = celda.add_paragraph()
+        p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _texto(p2, f"Fecha de pago: {fecha_pago}", tam=11, color="15803D")
+    _anchos(t, [6.5])
+
+
 def _notas(doc, notas, titulo="") -> None:
     """Título y notas con viñetas reales de Word (editables); las líneas en mayúsculas son encabezados de sección."""
     if not (notas or "").strip():
@@ -281,6 +305,8 @@ def _construir(d: documento.Documento, ruta: str) -> None:
     _bloque_etapa(doc, d)
     _tabla_totales(doc, d.totales)
     _notas(doc, d.notas, d.titulo_notas)
+    if d.pagado:
+        _sello_pagado(doc, d.fecha_pago)
     doc.save(ruta)
 
 

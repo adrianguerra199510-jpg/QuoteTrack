@@ -96,13 +96,15 @@ def test_ocultar_texto_en_tabla(cot, qapp):
 def test_contraer_costos_y_notas(cot, qapp):
     d = ui_items.ItemsDialog(1, "COT-2026-0001", editable=True)
     d.show()
-    assert d.tabla_cargos.isVisible() and d.cuerpo_notas.isVisible()
-    d.btn_ver_cargos.setChecked(False)
-    d.btn_ver_notas.setChecked(False)
+    # al abrir, costos adicionales y notas están contraídos
     assert not d.tabla_cargos.isVisible() and not d.cuerpo_notas.isVisible()
-    assert d.btn_ver_cargos.text() == "Expandir"
+    assert d.btn_ver_cargos.text() == "Expandir" and d.btn_ver_notas.text() == "Expandir"
+    d.btn_ver_cargos.setChecked(True)
     d.btn_ver_notas.setChecked(True)
-    assert d.cuerpo_notas.isVisible() and d.btn_plantilla.isVisible()
+    assert d.tabla_cargos.isVisible() and d.cuerpo_notas.isVisible() and d.btn_plantilla.isVisible()
+    assert d.btn_ver_cargos.text() == "Contraer"
+    d.btn_ver_notas.setChecked(False)
+    assert not d.cuerpo_notas.isVisible() and not d.btn_plantilla.isVisible()
 
 
 def test_ventana_de_cotizacion_se_puede_maximizar(cot, qapp):

@@ -417,6 +417,8 @@ class ItemsDialog(QDialog):
         self.notas_edit.setMinimumHeight(self.notas_edit.fontMetrics().lineSpacing() * 6 + 20)
         cuerpo.addWidget(self.notas_edit)
         layout.addWidget(self.cuerpo_notas)
+        self.btn_ver_cargos.setChecked(False)      # costos adicionales y notas empiezan contraídos (más espacio a los ítems)
+        self.btn_ver_notas.setChecked(False)
 
         # --- botones
         pie = QWidget()
@@ -751,7 +753,7 @@ class ItemsDialog(QDialog):
         self._render_lineas(fila)
 
     def _boton_seccion(self, fila, mostrar):
-        """Botón que contrae o expande el contenido de una sección (empieza expandida)."""
+        """Botón que contrae o expande el contenido de una sección (nace expandido; quien lo crea puede contraerlo)."""
         b = boton("Contraer", "arrow-up", tooltip="Contraer o expandir esta sección")
         b.setCheckable(True)
         b.setChecked(True)

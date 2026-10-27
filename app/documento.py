@@ -18,6 +18,8 @@ class Documento:
     titulo_notas: str = ""           # vacío = «Alcance, exclusiones y condiciones»
     concepto: str = ""               # facturas por etapas: «Abono inicial (30%)»…
     resumen: list = field(default_factory=list)    # [(etiqueta, monto, es_ultimo)] total, facturado antes, esta factura, saldo
+    pagado: bool = False             # factura pagada: se imprime el sello «PAGADO» al final
+    fecha_pago: str = ""             # fecha que lleva el sello (puede faltar en facturas pagadas antiguas)
 
     @property
     def nombre_archivo(self) -> str:
@@ -79,7 +81,7 @@ def de_factura(factura_id: int, mostrar_estado: bool | None = None) -> Documento
     if fac["porcentaje"] is not None and concepto and fac["porcentaje"] < 99.9999:
         concepto = f"{concepto} — {round(fac['porcentaje'], 2):g}% del total de la cotización"
     return Documento("FACTURA", fac["numero"], fac["fecha"], cliente, empresa, extra, None, totales, fac["notas"],
-                     fac["titulo_notas"] or "", concepto, resumen)
+                     fac["titulo_notas"] or "", concepto, resumen, fac["estado_pago"] == "pagada", fac["fecha_pago"] or "")
 
 
 def _desglose_etapa(fac, totales_cot: calculo.Totales, conn):
