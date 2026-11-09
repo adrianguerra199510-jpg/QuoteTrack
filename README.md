@@ -81,3 +81,31 @@ Deja el ejecutable en `dist\QuoteTrack\QuoteTrack.exe` y un `QuoteTrack_portable
 - **Título del bloque de notas editable** en cotizaciones y facturas (por defecto «Alcance, exclusiones y condiciones»).
 - **Datos iniciales**: la primera vez que se abre la app se cargan las empresas, clientes, 4 cotizaciones y la factura FAC-2026-0001 de `assets/datos_iniciales.json`.
 - En el ejecutable, la base de datos se guarda en `%APPDATA%\QuoteTrack` (no se pierde al actualizar la carpeta); si había una junto al .exe se copia sola.
+
+
+## Conectar Claude a QuoteTrack (MCP)
+QuoteTrack incluye un servidor **MCP** (`QuoteTrackMCP.exe`, junto a `QuoteTrack.exe`) para que Claude consulte —y, si tú lo
+permites— cree cotizaciones y facturas desde un chat. Usa la misma base de datos de la aplicación
+(`%APPDATA%\QuoteTrack\quotetrack.db`), no necesita Python ni Internet y no guarda ni envía nada por su cuenta.
+
+**Claude Desktop** — edita `claude_desktop_config.json` (menú Configuración → Desarrollador → Editar configuración):
+
+```json
+{
+  "mcpServers": {
+    "quotetrack": {
+      "command": "C:\\ruta\\a\\QuoteTrack\\QuoteTrackMCP.exe"
+    }
+  }
+}
+```
+
+**Claude Code** — `claude mcp add quotetrack -- "C:\ruta\a\QuoteTrack\QuoteTrackMCP.exe"`
+
+- Por defecto es de **solo lectura**: `estadisticas`, `listar_clientes`, `listar_cotizaciones`, `obtener_cotizacion`,
+  `resumen_cotizacion`, `listar_facturas`, `obtener_factura` y `exportar_pdf`.
+- Para permitir que Claude cree y modifique datos agrega `"args": ["--escritura"]` (o `claude mcp add … -- ruta --escritura`):
+  habilita `crear_cliente`, `crear_cotizacion`, `cambiar_estado_cotizacion`, `generar_factura` y `marcar_factura_pagada`.
+  Nunca borra nada.
+- Otra base de datos: `--db RUTA` o la variable `QUOTETRACK_DB`. Con Python: `python -m app.mcp_servidor --db quotetrack.db`.
+- Con la aplicación abierta se puede usar a la vez; haz una copia de `quotetrack.db` antes de permitir la escritura.

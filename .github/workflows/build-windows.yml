@@ -30,6 +30,16 @@ jobs:
           Start-Sleep -Seconds 8
           if ($p.HasExited) { throw "QuoteTrack.exe se cerró al iniciar (código $($p.ExitCode))" }
           Stop-Process -Id $p.Id -Force
+      - name: Compilar el servidor MCP (QuoteTrackMCP.exe)
+        id: mcp
+        continue-on-error: true        # si falla, la aplicación se entrega igual
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onefile --console --name QuoteTrackMCP --add-data "assets;assets" --collect-data docx --exclude-module PySide6 quotetrack_mcp.py
+          $entrada = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}'
+          $salida = $entrada | & "dist\QuoteTrackMCP.exe" --db "$env:RUNNER_TEMP\no_existe.db"
+          if ($salida -notmatch "quotetrack") { throw "QuoteTrackMCP.exe no respondió al protocolo MCP: $salida" }
+          Copy-Item "dist\QuoteTrackMCP.exe" "dist\QuoteTrack\QuoteTrackMCP.exe"
       - name: Comprimir
         shell: pwsh
         run: Compress-Archive -Path dist\QuoteTrack -DestinationPath QuoteTrack_portable.zip
