@@ -77,6 +77,7 @@ build_portable.bat
 Deja el ejecutable en `dist\QuoteTrack\QuoteTrack.exe` y un `QuoteTrack_portable.zip` para compartir.
 
 ## Novedades recientes
+- **Indicador «MCP conectado»** en la barra lateral (punto verde + enchufe; gris si no hay MCP; ámbar un instante cuando Claude acaba de usarlo). El servidor `QuoteTrackMCP.exe` escribe un latido en `%APPDATA%\QuoteTrack\mcp_estado\` y la app lo lee cada 1,5 s; el tooltip indica si el MCP es de solo lectura o puede modificar datos. Cuando el MCP crea o cambia algo, las listas se refrescan solas. Para que Claude pueda **crear y modificar** cotizaciones, registra el servidor con el parámetro `--escritura` (`"args": ["--escritura"]` en `claude_desktop_config.json`); sin él es de solo lectura. `--sin-latido` desactiva el indicador.
 - **Editor de texto con formato** para la descripción de cada ítem (doble clic, F2 o «Editar texto»): negrita, cursiva, subrayado, viñetas y numeración; ventana amplia con desplazamiento. El formato se respeta en el PDF, el Word y la vista previa.
 - **Título del bloque de notas editable** en cotizaciones y facturas (por defecto «Alcance, exclusiones y condiciones»).
 - **Datos iniciales**: la primera vez que se abre la app se cargan las empresas, clientes, 4 cotizaciones y la factura FAC-2026-0001 de `assets/datos_iniciales.json`.

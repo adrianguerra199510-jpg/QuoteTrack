@@ -3,8 +3,11 @@ cotizaciones y facturas de la base de datos de la aplicación.
 
 Habla JSON-RPC por entrada/salida estándar (un mensaje JSON por línea), sin dependencias externas ni Qt:
 
-    QuoteTrackMCP.exe [--db RUTA] [--escritura]
-    python -m app.mcp_servidor [--db RUTA] [--escritura]
+    QuoteTrackMCP.exe [--db RUTA] [--escritura] [--sin-latido]
+    python -m app.mcp_servidor [--db RUTA] [--escritura] [--sin-latido]
+
+Mientras corre, escribe un latido en `mcp_estado\\` (junto a la base de datos) para que la aplicación muestre el
+indicador «MCP conectado»; `--sin-latido` lo desactiva.
 
 Por defecto es de SOLO LECTURA. Con `--escritura` (o QUOTETRACK_MCP_ESCRITURA=1) se habilitan también las
 herramientas que crean clientes y cotizaciones, cambian su estado, generan facturas y las marcan como pagadas.
@@ -17,7 +20,7 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
-from app import calculo, db, documento, pdf, texto_rico
+from app import calculo, db, documento, mcp_estado, pdf, texto_rico
 from app.calculo import Cargo, Linea
 
 VERSION = "1.0"
@@ -448,8 +451,9 @@ HERRAMIENTAS = {
 
 # ----------------------------------------------------------------------------- protocolo MCP
 class Servidor:
-    def __init__(self, escritura: bool = False):
+    def __init__(self, escritura: bool = False, latido: "mcp_estado.Latido | None" = None):
         self.escritura = escritura
+        self.latido = latido            # si existe, la aplicación ve que el MCP está conectado y su actividad
 
     def _herramientas(self):
         return {n: h for n, h in HERRAMIENTAS.items() if self.escritura or not h[1]}
@@ -469,6 +473,8 @@ class Servidor:
             funcion = HERRAMIENTAS[nombre][0]
             resultado = funcion(argumentos or {})
             texto = json.dumps(resultado, ensure_ascii=False, indent=2, default=str)
+            if self.latido:
+                self.latido.registrar(nombre, HERRAMIENTAS[nombre][1])   # la app refresca sus listas si modificó datos
             return {"content": [{"type": "text", "text": texto}], "isError": False}
         except ErrorHerramienta as e:
             return {"content": [{"type": "text", "text": str(e)}], "isError": True}
@@ -540,7 +546,14 @@ def main(argv=None) -> int:
         db.init_db()                                  # deja el esquema al día (idempotente)
     print(f"QuoteTrack MCP {VERSION} · base de datos: {db.DB_PATH} · "
           f"{'lectura y escritura' if escritura else 'solo lectura'}", file=sys.stderr)
-    Servidor(escritura).servir()
+    latido = None if "--sin-latido" in argv else mcp_estado.Latido(db.DB_PATH, escritura)
+    if latido:
+        latido.iniciar()
+    try:
+        Servidor(escritura, latido).servir()
+    finally:
+        if latido:
+            latido.detener()                          # al cerrarse el MCP, el indicador de la app se apaga
     return 0
 
 

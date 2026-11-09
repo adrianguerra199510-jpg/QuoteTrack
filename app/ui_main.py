@@ -20,6 +20,7 @@ from app.ui_comun import (  # noqa: F401  (se reexportan para compatibilidad)
 from app.ui_biblioteca import BibliotecaTab
 from app.ui_empresas import EmpresasTab
 from app.ui_items import ItemsDialog, mostrar_resumen  # noqa: F401
+from app.ui_mcp import IndicadorMcp
 from app.ui_vista_previa import vista_previa
 
 COT_ESTADO = 5   # columna «Estado» de la tabla de cotizaciones
@@ -1056,6 +1057,9 @@ class MainWindow(QMainWindow):
             self.pila.addWidget(widget)
         self.nav.currentRowChanged.connect(self._cambiar_seccion)
         lv.addWidget(self.nav, 1)
+        self.indicador_mcp = IndicadorMcp()
+        self.indicador_mcp.datos_modificados.connect(self._refrescar_actual)   # el MCP cambió datos: se ven al momento
+        lv.addWidget(self.indicador_mcp)
         pie = QLabel("v1.2")
         pie.setObjectName("marcaSub")
         pie.setContentsMargins(20, 0, 0, 0)
@@ -1073,6 +1077,12 @@ class MainWindow(QMainWindow):
         widget = self.pila.widget(fila)
         if hasattr(widget, "refrescar"):
             widget.refrescar()
+
+    def _refrescar_actual(self):
+        """Vuelve a leer la sección visible (y las listas principales) tras un cambio hecho por el MCP."""
+        for w in (self.cotizaciones_tab, self.facturas_tab, self.pila.currentWidget()):
+            if w is not None and hasattr(w, "refrescar"):
+                w.refrescar()
 
 
 def main():
