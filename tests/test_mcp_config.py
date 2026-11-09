@@ -105,6 +105,19 @@ def test_rutas_msix_y_clasica(tmp_path, monkeypatch):
     assert mcp_config.rutas_destino() == [tmp_path / "nada2" / "Claude" / mcp_config.ARCHIVO]
 
 
+def test_ruta_de_datos_fuera_del_paquete_va_primero(tmp_path, monkeypatch):
+    local, roaming = tmp_path / "Local", tmp_path / "Roaming"
+    datos = local / "Claude-Data" / "claude_abc"
+    msix = local / "Packages" / "Claude_abc" / "LocalCache" / "Roaming" / "Claude"
+    datos.mkdir(parents=True)
+    msix.mkdir(parents=True)
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setenv("APPDATA", str(roaming))
+    assert mcp_config.rutas_config()[0] == datos / mcp_config.ARCHIVO
+    (datos / mcp_config.ARCHIVO).write_text("{}")
+    assert mcp_config.rutas_destino() == [datos / mcp_config.ARCHIVO]              # solo el que existe
+
+
 def test_comando_en_ejecutable_y_en_desarrollo(tmp_path, monkeypatch):
     exe = tmp_path / "QuoteTrack.exe"
     exe.write_text("")

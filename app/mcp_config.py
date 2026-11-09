@@ -24,7 +24,15 @@ def rutas_config() -> list[Path]:
     """Rutas posibles del archivo de configuración de Claude Desktop (existan o no)."""
     rutas = []
     local, roaming = os.environ.get("LOCALAPPDATA"), os.environ.get("APPDATA")
-    if local:                                    # instalación de la Microsoft Store (MSIX): el Roaming está virtualizado
+    if local:
+        # Versiones recientes de la instalación de la Microsoft Store guardan los datos FUERA del paquete:
+        # %LOCALAPPDATA%\Claude-Data\<id>\claude_desktop_config.json. Es el archivo que Claude Desktop lee de verdad.
+        datos = Path(local) / "Claude-Data"
+        if datos.is_dir():
+            for d in sorted(datos.glob("claude_*")):
+                if d.is_dir():
+                    rutas.append(d / ARCHIVO)
+        # Instalación MSIX antigua: el Roaming está virtualizado dentro del paquete
         paquetes = Path(local) / "Packages"
         if paquetes.is_dir():
             for d in sorted(paquetes.glob("Claude_*")):
