@@ -20,7 +20,7 @@ from app.ui_comun import (  # noqa: F401  (se reexportan para compatibilidad)
 from app.ui_biblioteca import BibliotecaTab
 from app.ui_empresas import EmpresasTab
 from app.ui_items import ItemsDialog, mostrar_resumen  # noqa: F401
-from app.ui_mcp import IndicadorMcp
+from app.ui_mcp import ConexionMcpDialog, IndicadorMcp
 from app.ui_vista_previa import vista_previa
 
 COT_ESTADO = 5   # columna «Estado» de la tabla de cotizaciones
@@ -905,6 +905,17 @@ class ConfiguracionTab(QWidget):
         cl.addLayout(fila)
         lay.addWidget(card)
 
+        mcp = tarjeta()
+        ml = QHBoxLayout(mcp)
+        ml.setContentsMargins(16, 12, 16, 12)
+        txt = QLabel("<b>Conexión con Claude (MCP)</b><br>Deja que Claude consulte y cree cotizaciones y facturas.")
+        txt.setObjectName("subtitulo")
+        ml.addWidget(txt, 1)
+        self.btn_mcp = boton("Activar MCP…", "plug")
+        self.btn_mcp.clicked.connect(lambda: ConexionMcpDialog(self).exec())
+        ml.addWidget(self.btn_mcp)
+        lay.addWidget(mcp)
+
         sec = QLabel("Plantillas de notas por defecto")
         sec.setObjectName("seccion")
         lay.addWidget(sec)
@@ -1059,6 +1070,7 @@ class MainWindow(QMainWindow):
         lv.addWidget(self.nav, 1)
         self.indicador_mcp = IndicadorMcp()
         self.indicador_mcp.datos_modificados.connect(self._refrescar_actual)   # el MCP cambió datos: se ven al momento
+        self.indicador_mcp.clic.connect(lambda: ConexionMcpDialog(self).exec())
         lv.addWidget(self.indicador_mcp)
         pie = QLabel("v1.2")
         pie.setObjectName("marcaSub")

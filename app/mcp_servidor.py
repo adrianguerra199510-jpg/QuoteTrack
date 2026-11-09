@@ -525,8 +525,21 @@ class Servidor:
                 salida.flush()
 
 
+def _asegurar_flujos() -> None:
+    """Un ejecutable sin consola (el MCP se compila así para no abrir ventanas) puede arrancar con stdin/stdout/stderr
+    en None. Si Claude Desktop pasa tuberías se enlazan a los descriptores 0, 1 y 2; si no hay ninguna (p. ej. doble
+    clic en el .exe) se usan flujos vacíos y el servidor termina enseguida, sin ventana ni procesos colgados."""
+    for fd, nombre, modo in ((0, "stdin", "r"), (1, "stdout", "w"), (2, "stderr", "w")):
+        if getattr(sys, nombre) is None:
+            try:
+                setattr(sys, nombre, open(fd, modo, encoding="utf-8", closefd=False))
+            except OSError:
+                setattr(sys, nombre, open(os.devnull, modo, encoding="utf-8"))
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    _asegurar_flujos()
     for flujo in (sys.stdin, sys.stdout, sys.stderr):     # en Windows la consola usa cp1252: se fuerza UTF-8
         try:
             flujo.reconfigure(encoding="utf-8", errors="replace" if flujo is sys.stderr else "strict")

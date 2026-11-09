@@ -23,6 +23,9 @@ if errorlevel 1 (
 
 pyinstaller --noconfirm --clean --windowed --name QuoteTrack --icon assets\icon.ico --add-data "assets;assets" --collect-data docx main.py
 
+pyinstaller --noconfirm --clean --onefile --noconsole --name QuoteTrackMCP --add-data "assets;assets" --collect-data docx --exclude-module PySide6 quotetrack_mcp.py
+copy /Y dist\QuoteTrackMCP.exe dist\QuoteTrack\QuoteTrackMCP.exe
+
 echo.
 echo Listo. Ejecutable en dist\QuoteTrack\QuoteTrack.exe
 pause
