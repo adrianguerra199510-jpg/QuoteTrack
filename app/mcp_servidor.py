@@ -521,9 +521,9 @@ class Servidor:
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    for flujo in (sys.stdin, sys.stdout):
+    for flujo in (sys.stdin, sys.stdout, sys.stderr):     # en Windows la consola usa cp1252: se fuerza UTF-8
         try:
-            flujo.reconfigure(encoding="utf-8")
+            flujo.reconfigure(encoding="utf-8", errors="replace" if flujo is sys.stderr else "strict")
         except (AttributeError, ValueError):
             pass
     if "--ayuda" in argv or "-h" in argv or "--help" in argv:

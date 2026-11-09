@@ -128,7 +128,7 @@ def test_servidor_por_la_entrada_estandar(tmp_path, datos):
     assert respuestas[0]["result"]["serverInfo"]["name"] == "quotetrack"
     assert "estadisticas" in [t["name"] for t in respuestas[1]["result"]["tools"]]
     assert json.loads(respuestas[2]["result"]["content"][0]["text"])["clientes"] == 2
-    assert "solo lectura" in p.stderr
+    assert "solo lectura" in (p.stderr or "")
 
 
 def test_sin_base_de_datos(tmp_path):
